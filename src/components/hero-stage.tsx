@@ -96,7 +96,13 @@ function smoothstep(a: number, b: number, x: number) {
 // LOGO MESH
 // ============================================================
 
-function LogoMesh({ progressRef }: { progressRef: MutableRefObject<number> }) {
+function LogoMesh({
+  progressRef,
+  isMobile,
+}: {
+  progressRef: MutableRefObject<number>;
+  isMobile: boolean;
+}) {
   const geo = useLogoGeometry();
   const groupRef = useRef<THREE.Group>(null);
   const markRef = useRef<THREE.Mesh>(null);
@@ -168,7 +174,8 @@ function LogoMesh({ progressRef }: { progressRef: MutableRefObject<number> }) {
   });
 
   if (!geo) return null;
-  const scale = 0.0028;
+  // Mobile: smaller scale + tighter mark/wordmark layout to fit narrow viewport
+  const scale = isMobile ? 0.0019 : 0.0028;
 
   return (
     <group ref={groupRef} scale={[scale, scale, scale]} position={[0, 0, 0]}>
@@ -202,41 +209,46 @@ function LogoMesh({ progressRef }: { progressRef: MutableRefObject<number> }) {
 // CAMERA RIG — multi-stop journey
 // ============================================================
 
-function CameraRig({ progressRef }: { progressRef: MutableRefObject<number> }) {
+function CameraRig({
+  progressRef,
+  isMobile,
+}: {
+  progressRef: MutableRefObject<number>;
+  isMobile: boolean;
+}) {
   const target = useRef({ x: 0, y: 0 });
   const current = useRef({ x: 0, y: 0 });
   const easedP = useRef(0);
   const { camera } = useThree();
 
   useFrame((state) => {
-    target.current.x = state.mouse.x * 0.25;
-    target.current.y = state.mouse.y * 0.15;
-    current.current.x += (target.current.x - current.current.x) * 0.05;
-    current.current.y += (target.current.y - current.current.y) * 0.05;
+    // Mobile: no mouse parallax (touch device)
+    if (!isMobile) {
+      target.current.x = state.mouse.x * 0.25;
+      target.current.y = state.mouse.y * 0.15;
+      current.current.x += (target.current.x - current.current.x) * 0.05;
+      current.current.y += (target.current.y - current.current.y) * 0.05;
+    }
     easedP.current += (progressRef.current - easedP.current) * 0.06;
 
     const t = state.clock.elapsedTime;
     const p = easedP.current;
 
-    // Camera positions per stage:
-    // 0: front, distance 7.5 (sees full logo)
-    // 1: front, distance 6.0 (zoomed in on mark)
-    // 2: side-left, distance 5.5 (showing depth)
-    // 3: top-down, distance 5.0
-    // 4: close-up, distance 3.8
-    // 5: far pull-out, distance 9.0
+    // Mobile needs further base distance + less aggressive zoom
+    const baseRadius = isMobile ? 9.5 : 7.5;
+    const closeOffset = isMobile ? 1.0 : 1.2;
+    const pullOffset = isMobile ? 4.0 : 5.2;
 
     const radius =
-      7.5 -
-      smoothstep(0.0, 0.2, p) * 1.5 -    // → 6.0
-      smoothstep(0.2, 0.4, p) * 0.5 -    // → 5.5
-      smoothstep(0.4, 0.6, p) * 0.5 -    // → 5.0
-      smoothstep(0.6, 0.8, p) * 1.2 +    // → 3.8
-      smoothstep(0.8, 1.0, p) * 5.2;     // → 9.0
+      baseRadius -
+      smoothstep(0.0, 0.2, p) * (isMobile ? 0.8 : 1.5) -
+      smoothstep(0.2, 0.4, p) * 0.5 -
+      smoothstep(0.4, 0.6, p) * 0.5 -
+      smoothstep(0.6, 0.8, p) * closeOffset +
+      smoothstep(0.8, 1.0, p) * pullOffset;
 
     const sideAngle = smoothstep(0.2, 0.4, p) * 0.6 - smoothstep(0.6, 0.8, p) * 0.3;
     const topAngle = smoothstep(0.4, 0.6, p) * 0.55 - smoothstep(0.6, 0.8, p) * 0.4;
-
     const baseAngle = Math.sin(t * 0.05) * (0.1 + p * 0.05);
 
     camera.position.x =
@@ -283,11 +295,22 @@ function DynamicDOF({ progressRef }: { progressRef: MutableRefObject<number> }) 
 // MAIN STAGE
 // ============================================================
 
-export function HeroStage({ progressRef }: { progressRef: MutableRefObject<number> }) {
+export function HeroStage({
+  progressRef,
+  isMobile = false,
+}: {
+  progressRef: MutableRefObject<number>;
+  isMobile?: boolean;
+}) {
+  // Mobile: wider fov for more subject visibility, lower DPR for performance
+  const fov = isMobile ? 50 : 38;
+  const dpr: [number, number] = isMobile ? [1, 1.3] : [1, 1.6];
+  const initialZ = isMobile ? 9.5 : 7.5;
+
   return (
     <Canvas
-      shadows
-      camera={{ position: [0, 0.3, 7.5], fov: 38 }}
+      shadows={!isMobile}
+      camera={{ position: [0, 0.3, initialZ], fov }}
       gl={{
         alpha: true,
         antialias: true,
@@ -295,7 +318,7 @@ export function HeroStage({ progressRef }: { progressRef: MutableRefObject<numbe
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 0.95,
       }}
-      dpr={[1, 1.6]}
+      dpr={dpr}
       style={{
         position: "absolute",
         inset: 0,
@@ -317,14 +340,14 @@ export function HeroStage({ progressRef }: { progressRef: MutableRefObject<numbe
         <Environment preset="warehouse" />
 
         <Float speed={1.0} rotationIntensity={0.06} floatIntensity={0.14} floatingRange={[-0.03, 0.03]}>
-          <LogoMesh progressRef={progressRef} />
+          <LogoMesh progressRef={progressRef} isMobile={isMobile} />
         </Float>
 
         <ContactShadows position={[0, -1.4, 0]} opacity={0.55} scale={12} blur={2.4} far={4} color="#000000" />
 
-        <CameraRig progressRef={progressRef} />
+        <CameraRig progressRef={progressRef} isMobile={isMobile} />
 
-        <EffectComposer multisampling={2}>
+        <EffectComposer multisampling={isMobile ? 0 : 2}>
           <Bloom intensity={0.18} luminanceThreshold={0.85} luminanceSmoothing={0.9} mipmapBlur />
           <DynamicDOF progressRef={progressRef} />
           <Vignette eskil={false} offset={0.12} darkness={0.5} />
