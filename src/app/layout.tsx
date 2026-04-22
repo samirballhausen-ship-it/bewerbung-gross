@@ -4,6 +4,8 @@ import "./globals.css";
 
 import { LenisProvider } from "@/components/lenis-provider";
 import { CursorGlow } from "@/components/cursor-glow";
+import { BootGate } from "@/components/boot-portal";
+import { Header } from "@/components/header";
 
 const bricolage = Bricolage_Grotesque({
   variable: "--font-bricolage",
@@ -41,8 +43,11 @@ export default function RootLayout({
     >
       <body>
         <LenisProvider>
-          <CursorGlow />
-          {children}
+          <BootGate>
+            <CursorGlow />
+            <Header />
+            {children}
+          </BootGate>
         </LenisProvider>
       </body>
     </html>
