@@ -14,17 +14,18 @@ import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
 import { asset } from "@/lib/utils";
 
 /**
- * HeroStage v4 — Studio mit Scroll-Choreographie.
+ * HeroStage v5 — Continuous 3D-Welt mit Multi-Stop Camera-Reise.
  *
- * Bei Scroll-Progress 0 → 1 (sticky-section unscrollt → vollausgescrollt):
- * - Wordmark "GROSS" fadet aus + slidet hoch raus
- * - Mark wandert ins Bildzentrum (von -700 → 0)
- * - Mark scaled hoch (~1.3x)
- * - Material morpht: matt-metallic → polierter Bronze → klarer Reflektor
- * - Camera zoomt sanft rein (z 7.5 → 5.0)
- * - Auto-Rotation steigert sich
+ * 5 Akte (progress 0..1):
+ *   Akt 0 (0.00): Logo voll, scharf, Wordmark + Mark sichtbar
+ *   Akt 1 (0.20): Wordmark weg, Mark zentriert, Bronze beginnt, leichter Tilt
+ *   Akt 2 (0.40): Camera schwenkt nach links, Logo aus 30°-Side
+ *   Akt 3 (0.60): Camera Top-Down, Aufsicht auf Mark
+ *   Akt 4 (0.80): Close-Up, Detail-Sicht der G-Geometrie
+ *   Akt 5 (1.00): Pull-Out, Logo klein im Raum, voll bronze/chrome
  *
- * Progress-Wert kommt vom externen Hook via ref (kein Prop-Drilling-RAF).
+ * DOF beginnt sharp (bokehScale=0), waechst mit p auf bokehScale=4.
+ * User-Wunsch: "am Anfang gestochen scharf, beim Runterscrollen unscharf".
  */
 
 interface LogoGroups {
@@ -73,10 +74,6 @@ function useLogoGeometry(): LogoGroups | null {
   }, [data]);
 }
 
-// ============================================================
-// Material Morph helpers
-// ============================================================
-
 const COLORS = {
   matte: new THREE.Color("#f3f1ea"),
   bronze: new THREE.Color("#c9a878"),
@@ -89,8 +86,14 @@ function lerpColor(out: THREE.Color, a: THREE.Color, b: THREE.Color, t: number) 
   out.b = a.b + (b.b - a.b) * t;
 }
 
+// Easing
+function smoothstep(a: number, b: number, x: number) {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
 // ============================================================
-// LOGO MESH with scroll-driven choreography
+// LOGO MESH
 // ============================================================
 
 function LogoMesh({ progressRef }: { progressRef: MutableRefObject<number> }) {
@@ -101,63 +104,66 @@ function LogoMesh({ progressRef }: { progressRef: MutableRefObject<number> }) {
   const markMatRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const wordmarkMatRef = useRef<THREE.MeshPhysicalMaterial>(null);
 
-  // Eased current values — lerp to scroll target
   const eased = useRef(0);
-
-  // Reusable color buffers
   const markColor = useRef(new THREE.Color("#f3f1ea"));
-  const wordmarkColor = useRef(new THREE.Color("#ebe9e2"));
 
   useFrame((state) => {
-    const target = progressRef.current;
-    eased.current += (target - eased.current) * 0.08;
+    eased.current += (progressRef.current - eased.current) * 0.075;
     const p = eased.current;
     const t = state.clock.elapsedTime;
 
-    // Whole-group base rotation (subtle), plus increased rotation as p grows
+    // Group rotation builds with progress (Akt 2/3 = side/top views)
     if (groupRef.current) {
-      const baseY = Math.sin(t * 0.18) * 0.18;
-      const scrollY = p * Math.PI * 0.35;
-      groupRef.current.rotation.y = baseY + scrollY;
-      groupRef.current.rotation.x = Math.sin(t * 0.12) * 0.04;
+      const baseY = Math.sin(t * 0.18) * 0.12;
+      // Rotation builds in stages: 0→0.2 minimal, 0.2→0.4 swing, 0.4→0.6 top-down, 0.6→0.8 close, 0.8→1 pull
+      const stage1 = smoothstep(0.2, 0.4, p) * 0.6;          // sideways swing
+      const stage2 = smoothstep(0.4, 0.6, p) * 0.9;          // top-down tilt
+      const stage3 = smoothstep(0.6, 0.8, p) * 0.4;          // close detail spin
+      groupRef.current.rotation.y = baseY + stage1 + stage3 * 0.5;
+      groupRef.current.rotation.x = Math.sin(t * 0.12) * 0.04 - stage2;
     }
 
-    // Mark: positions from -700 → 0, scale 1 → 1.4
+    // Mark: wandert in Mitte (0..0.2), bleibt dann zentriert
     if (markRef.current) {
-      const x = -700 * (1 - p);
-      const sc = 1 + p * 0.4;
-      markRef.current.position.x = x;
-      markRef.current.scale.setScalar(sc);
+      const wanderProgress = smoothstep(0, 0.2, p);
+      markRef.current.position.x = -700 * (1 - wanderProgress);
+      // Scale: 1.0 (Akt 0) → 1.4 (Akt 1) → 1.6 (Akt 3 close) → 0.8 (Akt 5 pull-out)
+      let sc = 1.0;
+      sc += smoothstep(0, 0.2, p) * 0.4;
+      sc += smoothstep(0.6, 0.8, p) * 0.2;
+      sc -= smoothstep(0.8, 1.0, p) * 0.7;
+      markRef.current.scale.setScalar(Math.max(0.3, sc));
     }
 
-    // Wordmark: fade out + slide up
-    if (wordmarkRef.current) {
-      wordmarkRef.current.position.y = p * 250;
-      wordmarkRef.current.scale.setScalar(Math.max(0.001, 1 - p * 0.3));
-      wordmarkRef.current.visible = p < 0.92;
-    }
-    if (wordmarkMatRef.current) {
-      wordmarkMatRef.current.opacity = Math.max(0, 1 - p * 1.4);
+    // Wordmark: fade out + slide up (only Akt 0→1)
+    if (wordmarkRef.current && wordmarkMatRef.current) {
+      const wmProgress = smoothstep(0, 0.18, p);
+      wordmarkRef.current.position.y = wmProgress * 280;
+      wordmarkRef.current.scale.setScalar(Math.max(0.001, 1 - wmProgress * 0.4));
+      wordmarkRef.current.visible = wmProgress < 0.95;
+      wordmarkMatRef.current.opacity = Math.max(0, 1 - wmProgress * 1.4);
       wordmarkMatRef.current.transparent = true;
     }
 
-    // Material morph on mark: matte → bronze (0..0.5), bronze → chrome (0.5..1)
+    // Material morph on mark
     if (markMatRef.current) {
-      if (p < 0.5) {
-        const t01 = p / 0.5;
+      // 0 → 0.4: matte → bronze
+      // 0.4 → 0.8: bronze → chrome
+      if (p < 0.4) {
+        const t01 = p / 0.4;
         lerpColor(markColor.current, COLORS.matte, COLORS.bronze, t01);
         markMatRef.current.metalness = 0.78 + 0.12 * t01;
         markMatRef.current.roughness = 0.22 - 0.1 * t01;
         markMatRef.current.clearcoat = 0.55 + 0.25 * t01;
       } else {
-        const t01 = (p - 0.5) / 0.5;
+        const t01 = Math.min(1, (p - 0.4) / 0.4);
         lerpColor(markColor.current, COLORS.bronze, COLORS.chrome, t01);
         markMatRef.current.metalness = 0.9 + 0.05 * t01;
         markMatRef.current.roughness = 0.12 + 0.04 * t01;
         markMatRef.current.clearcoat = 0.8 + 0.15 * t01;
       }
       markMatRef.current.color.copy(markColor.current);
-      markMatRef.current.envMapIntensity = 1.0 + p * 0.4;
+      markMatRef.current.envMapIntensity = 1.0 + p * 0.5;
     }
   });
 
@@ -193,7 +199,7 @@ function LogoMesh({ progressRef }: { progressRef: MutableRefObject<number> }) {
 }
 
 // ============================================================
-// CAMERA RIG with scroll-zoom
+// CAMERA RIG — multi-stop journey
 // ============================================================
 
 function CameraRig({ progressRef }: { progressRef: MutableRefObject<number> }) {
@@ -203,25 +209,74 @@ function CameraRig({ progressRef }: { progressRef: MutableRefObject<number> }) {
   const { camera } = useThree();
 
   useFrame((state) => {
-    target.current.x = state.mouse.x * 0.35;
-    target.current.y = state.mouse.y * 0.18;
-    current.current.x += (target.current.x - current.current.x) * 0.04;
-    current.current.y += (target.current.y - current.current.y) * 0.04;
+    target.current.x = state.mouse.x * 0.25;
+    target.current.y = state.mouse.y * 0.15;
+    current.current.x += (target.current.x - current.current.x) * 0.05;
+    current.current.y += (target.current.y - current.current.y) * 0.05;
     easedP.current += (progressRef.current - easedP.current) * 0.06;
 
     const t = state.clock.elapsedTime;
     const p = easedP.current;
 
-    // Radius shrinks from 7.5 → 5.0 as scroll progresses (zoom in)
-    const radius = 7.5 - p * 2.5;
-    const angle = Math.sin(t * 0.05) * (0.14 + p * 0.1);
-    camera.position.x = Math.sin(angle) * radius + current.current.x;
-    camera.position.y = current.current.y + 0.3 - p * 0.1;
-    camera.position.z = Math.cos(angle) * radius;
+    // Camera positions per stage:
+    // 0: front, distance 7.5 (sees full logo)
+    // 1: front, distance 6.0 (zoomed in on mark)
+    // 2: side-left, distance 5.5 (showing depth)
+    // 3: top-down, distance 5.0
+    // 4: close-up, distance 3.8
+    // 5: far pull-out, distance 9.0
+
+    const radius =
+      7.5 -
+      smoothstep(0.0, 0.2, p) * 1.5 -    // → 6.0
+      smoothstep(0.2, 0.4, p) * 0.5 -    // → 5.5
+      smoothstep(0.4, 0.6, p) * 0.5 -    // → 5.0
+      smoothstep(0.6, 0.8, p) * 1.2 +    // → 3.8
+      smoothstep(0.8, 1.0, p) * 5.2;     // → 9.0
+
+    const sideAngle = smoothstep(0.2, 0.4, p) * 0.6 - smoothstep(0.6, 0.8, p) * 0.3;
+    const topAngle = smoothstep(0.4, 0.6, p) * 0.55 - smoothstep(0.6, 0.8, p) * 0.4;
+
+    const baseAngle = Math.sin(t * 0.05) * (0.1 + p * 0.05);
+
+    camera.position.x =
+      Math.sin(baseAngle + sideAngle) * radius + current.current.x;
+    camera.position.y =
+      current.current.y + 0.3 + topAngle * radius * 0.7;
+    camera.position.z = Math.cos(baseAngle + sideAngle) * radius;
     camera.lookAt(0, -0.1, 0);
   });
 
   return null;
+}
+
+// ============================================================
+// DYNAMIC DOF
+// ============================================================
+
+function DynamicDOF({ progressRef }: { progressRef: MutableRefObject<number> }) {
+  const dofRef = useRef<{ bokehScale: number } | null>(null);
+  const eased = useRef(0);
+
+  useFrame(() => {
+    eased.current += (progressRef.current - eased.current) * 0.06;
+    const p = eased.current;
+    if (dofRef.current) {
+      // Sharp at p=0, build to bokehScale 4 by p=1
+      // Sharp threshold: keep <0.5 below 0.05, then ramp
+      const blur = p < 0.05 ? 0 : Math.pow((p - 0.05) / 0.95, 1.4) * 4.5;
+      dofRef.current.bokehScale = blur;
+    }
+  });
+
+  return (
+    <DepthOfField
+      ref={dofRef as React.Ref<unknown> as React.Ref<never>}
+      focusDistance={0.018}
+      focalLength={0.04}
+      bokehScale={0}
+    />
+  );
 }
 
 // ============================================================
@@ -261,7 +316,7 @@ export function HeroStage({ progressRef }: { progressRef: MutableRefObject<numbe
 
         <Environment preset="warehouse" />
 
-        <Float speed={1.0} rotationIntensity={0.08} floatIntensity={0.18} floatingRange={[-0.04, 0.04]}>
+        <Float speed={1.0} rotationIntensity={0.06} floatIntensity={0.14} floatingRange={[-0.03, 0.03]}>
           <LogoMesh progressRef={progressRef} />
         </Float>
 
@@ -271,7 +326,7 @@ export function HeroStage({ progressRef }: { progressRef: MutableRefObject<numbe
 
         <EffectComposer multisampling={2}>
           <Bloom intensity={0.18} luminanceThreshold={0.85} luminanceSmoothing={0.9} mipmapBlur />
-          <DepthOfField focusDistance={0.018} focalLength={0.04} bokehScale={2.5} />
+          <DynamicDOF progressRef={progressRef} />
           <Vignette eskil={false} offset={0.12} darkness={0.5} />
         </EffectComposer>
       </Suspense>
