@@ -1,179 +1,180 @@
 "use client";
 
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Float, Environment, Text3D, Center } from "@react-three/drei";
-import { EffectComposer, Bloom, ChromaticAberration, Vignette } from "@react-three/postprocessing";
-import { BlendFunction } from "postprocessing";
-import { useRef, useMemo, Suspense } from "react";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
+import { Float, Environment, ContactShadows } from "@react-three/drei";
+import {
+  EffectComposer,
+  Bloom,
+  Vignette,
+  DepthOfField,
+} from "@react-three/postprocessing";
+import { useRef, useMemo, Suspense, useEffect, useState } from "react";
 import * as THREE from "three";
+import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
 import { asset } from "@/lib/utils";
 
 /**
- * HeroStage v2 — Echtes 3D-Logo als Centerpiece.
+ * HeroStage v3 — Premium Architektur-Studio statt Space.
  *
- * Komposition:
- * - GROSSMark: Cube mit G-Cutout-Anschnitt, ExtrudeGeometry, premium Material
- * - GROSSWordmark: Text3D extruded Wordmark daneben
- * - Studio-Environment + 3-Point-Lighting
- * - Postprocessing: Bloom + ChromaticAberration + Vignette
- * - Float-Wrapper fuer dauerhafte sanfte Bewegung
- * - Camera-Drift + Mouse-Parallax
- * - Particle-Field als atmosphaerischer Hintergrund
+ * Vibe-Shift:
+ * - Boden + ContactShadows: Logo "steht" in einem Studio
+ * - Background-Gradient von oben (wie Hallenlicht)
+ * - Studio-Spotlights wie eine Galerie
+ * - Particles raus, statt subtle dust-textur
+ * - Logo geladen via SVGLoader aus dem 1:1 traced original
+ * - DepthOfField fuer Studio-Render-Look
  *
- * Aesthetik: Premium-Studio, Tech-Skulptur, kein generischer 3D-Kram.
+ * Logo-Struktur:
+ * - Mark (Wuerfel-Kubus mit innerem G) — extrudiert aus SVG-Pfad
+ * - Wordmark "GROSS" — extrudiert aus SVG-Pfad
+ * - Beide in derselben Skala wie Original
  */
 
 // ============================================================
-// GROSS MARK — Custom Geometry
+// LOGO GEOMETRY — loaded from public/gross-logo.svg
 // ============================================================
 
-function buildMarkGeometry() {
-  // Outer cube outline as flat 2D Hexagon (isometric front view)
-  // We extrude a hexagon for the cube silhouette.
-  const hex = new THREE.Shape();
-  const r = 1.0;
-  // Hexagon points (pointy-top orientation, isometric cube projection)
-  const points: [number, number][] = [
-    [0, r],
-    [r * Math.sin(Math.PI / 3), r * Math.cos(Math.PI / 3)],
-    [r * Math.sin(Math.PI / 3), -r * Math.cos(Math.PI / 3)],
-    [0, -r],
-    [-r * Math.sin(Math.PI / 3), -r * Math.cos(Math.PI / 3)],
-    [-r * Math.sin(Math.PI / 3), r * Math.cos(Math.PI / 3)],
-  ];
-  hex.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) hex.lineTo(points[i][0], points[i][1]);
-  hex.closePath();
-
-  // G-shaped hole inside — abstract geometric G
-  const hole = new THREE.Path();
-  // Three-stroke G: top arc, vertical right, inner bar
-  hole.moveTo(-0.35, 0.4);
-  hole.lineTo(0.35, 0.4);
-  hole.lineTo(0.35, -0.4);
-  hole.lineTo(-0.05, -0.4);
-  hole.lineTo(-0.05, -0.05);
-  hole.lineTo(0.18, -0.05);
-  hole.lineTo(0.18, 0.18);
-  hole.lineTo(-0.18, 0.18);
-  hole.lineTo(-0.18, -0.18);
-  hole.closePath();
-  hex.holes.push(hole);
-
-  return new THREE.ExtrudeGeometry(hex, {
-    depth: 0.35,
-    bevelEnabled: true,
-    bevelThickness: 0.04,
-    bevelSize: 0.03,
-    bevelOffset: 0,
-    bevelSegments: 4,
-    curveSegments: 12,
-  });
+interface LogoGroups {
+  markGeo: THREE.BufferGeometry;
+  wordmarkGeo: THREE.BufferGeometry;
 }
 
-function GrossMark3D() {
-  const geometry = useMemo(() => buildMarkGeometry(), []);
-  const ref = useRef<THREE.Mesh>(null);
+function useLogoGeometry(): LogoGroups | null {
+  const data = useLoader(SVGLoader, asset("/gross-logo.svg"));
+  return useMemo(() => {
+    // The SVG has one path with many subpaths covering both mark + wordmark.
+    // The mark occupies x: 0-359, wordmark: x: 539-1700, viewBox 1701x409.
+    // We separate by the centroid X of each subpath.
+    const path = data.paths[0];
+    if (!path) return null;
+
+    const allShapes = SVGLoader.createShapes(path);
+
+    const markShapes: THREE.Shape[] = [];
+    const wordmarkShapes: THREE.Shape[] = [];
+
+    for (const shape of allShapes) {
+      // compute centroid X
+      let sx = 0;
+      const pts = shape.getPoints();
+      for (const p of pts) sx += p.x;
+      sx /= pts.length;
+      if (sx < 450) markShapes.push(shape);
+      else wordmarkShapes.push(shape);
+    }
+
+    const extrudeSettings = {
+      depth: 30, // SVG units, will scale down later
+      bevelEnabled: true,
+      bevelThickness: 4,
+      bevelSize: 3,
+      bevelOffset: 0,
+      bevelSegments: 3,
+      curveSegments: 8,
+    };
+
+    const markGeoRaw = new THREE.ExtrudeGeometry(markShapes, extrudeSettings);
+    const wordmarkGeoRaw = new THREE.ExtrudeGeometry(wordmarkShapes, extrudeSettings);
+
+    // SVG has Y-down convention; Three.js Y-up. Flip Y.
+    markGeoRaw.scale(1, -1, 1);
+    wordmarkGeoRaw.scale(1, -1, 1);
+
+    // Center each geometry around its own centroid
+    markGeoRaw.computeBoundingBox();
+    wordmarkGeoRaw.computeBoundingBox();
+    const markCenter = new THREE.Vector3();
+    const wmCenter = new THREE.Vector3();
+    markGeoRaw.boundingBox!.getCenter(markCenter);
+    wordmarkGeoRaw.boundingBox!.getCenter(wmCenter);
+    markGeoRaw.translate(-markCenter.x, -markCenter.y, -markCenter.z);
+    wordmarkGeoRaw.translate(-wmCenter.x, -wmCenter.y, -wmCenter.z);
+
+    return { markGeo: markGeoRaw, wordmarkGeo: wordmarkGeoRaw };
+  }, [data]);
+}
+
+// ============================================================
+// LOGO MESH (Mark + Wordmark)
+// ============================================================
+
+function LogoMesh() {
+  const geo = useLogoGeometry();
+  const groupRef = useRef<THREE.Group>(null);
 
   useFrame((state) => {
-    if (!ref.current) return;
+    if (!groupRef.current) return;
     const t = state.clock.elapsedTime;
-    ref.current.rotation.y = t * 0.18;
-    ref.current.rotation.x = Math.sin(t * 0.3) * 0.1;
+    // Very gentle rotation — studio piece, not toy
+    groupRef.current.rotation.y = Math.sin(t * 0.18) * 0.18;
+    groupRef.current.rotation.x = Math.sin(t * 0.12) * 0.04;
   });
 
+  if (!geo) return null;
+
+  // SVG units: viewBox 1701x409. Total composition ~1700 wide.
+  // Scale 0.0035 → ~5.95 units total width. Camera fov 42 sees ~5.0 units at z=6.5.
+  // We need 0.0028 to comfortably fit at 6.5 distance.
+  const scale = 0.0028;
+
+  // Mark center is around x=180 in original SVG, wordmark center around x=1120.
+  // After centering each geometry, their internal origins are 0.
+  // We position them in the group to recreate the original side-by-side layout
+  // but slightly tighter for visual cohesion.
   return (
-    <mesh ref={ref} geometry={geometry} castShadow receiveShadow>
-      <meshPhysicalMaterial
-        color="#f3f1ea"
-        metalness={0.85}
-        roughness={0.18}
-        clearcoat={0.6}
-        clearcoatRoughness={0.1}
-        envMapIntensity={1.4}
-        reflectivity={0.5}
-      />
+    <group ref={groupRef} scale={[scale, scale, scale]} position={[0, 0, 0]}>
+      {/* Mark — positioned left of center */}
+      <mesh
+        geometry={geo.markGeo}
+        position={[-700, 0, 0]}
+        castShadow
+        receiveShadow
+      >
+        <meshPhysicalMaterial
+          color="#f3f1ea"
+          metalness={0.78}
+          roughness={0.22}
+          clearcoat={0.55}
+          clearcoatRoughness={0.12}
+          envMapIntensity={1.0}
+        />
+      </mesh>
+
+      {/* Wordmark — positioned right of center */}
+      <mesh
+        geometry={geo.wordmarkGeo}
+        position={[280, 0, 0]}
+        castShadow
+        receiveShadow
+      >
+        <meshPhysicalMaterial
+          color="#ebe9e2"
+          metalness={0.7}
+          roughness={0.28}
+          clearcoat={0.4}
+          envMapIntensity={0.95}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// ============================================================
+// STUDIO BACKDROP — subtle gradient backdrop wall
+// ============================================================
+
+function StudioBackdrop() {
+  // Large plane behind the scene with a soft gradient material
+  return (
+    <mesh position={[0, 0, -8]} rotation={[0, 0, 0]}>
+      <planeGeometry args={[40, 24]} />
+      <meshStandardMaterial color="#0d1018" roughness={1} metalness={0} />
     </mesh>
   );
 }
 
 // ============================================================
-// GROSS WORDMARK — extruded 3D text
-// ============================================================
-
-function GrossWordmark3D() {
-  return (
-    <Center position={[2.6, 0, 0]}>
-      <Text3D
-        font={asset("/helvetiker_bold.typeface.json")}
-        size={1.0}
-        height={0.16}
-        curveSegments={6}
-        bevelEnabled
-        bevelThickness={0.025}
-        bevelSize={0.018}
-        bevelSegments={3}
-        letterSpacing={-0.04}
-      >
-        GROSS
-        <meshPhysicalMaterial
-          color="#f3f1ea"
-          metalness={0.78}
-          roughness={0.22}
-          clearcoat={0.4}
-          envMapIntensity={1.2}
-        />
-      </Text3D>
-    </Center>
-  );
-}
-
-// ============================================================
-// PARTICLE FIELD — atmospheric background dust
-// ============================================================
-
-function ParticleField() {
-  const ref = useRef<THREE.Points>(null);
-
-  const positions = useMemo(() => {
-    const count = 1200;
-    const arr = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const r = 10 + Math.random() * 12;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      arr[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      arr[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      arr[i * 3 + 2] = r * Math.cos(phi);
-    }
-    return arr;
-  }, []);
-
-  useFrame((state) => {
-    if (!ref.current) return;
-    ref.current.rotation.y = state.clock.elapsedTime * 0.01;
-    ref.current.rotation.x = state.clock.elapsedTime * 0.005;
-  });
-
-  return (
-    <points ref={ref}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.022}
-        color="#b8c4d0"
-        transparent
-        opacity={0.45}
-        sizeAttenuation
-        depthWrite={false}
-      />
-    </points>
-  );
-}
-
-// ============================================================
-// CAMERA RIG — auto-drift + mouse parallax
+// CAMERA RIG — studio-style subtle drift + parallax
 // ============================================================
 
 function CameraRig() {
@@ -182,18 +183,19 @@ function CameraRig() {
   const { camera } = useThree();
 
   useFrame((state) => {
-    target.current.x = state.mouse.x * 0.8;
-    target.current.y = state.mouse.y * 0.5;
+    target.current.x = state.mouse.x * 0.35;
+    target.current.y = state.mouse.y * 0.18;
     current.current.x += (target.current.x - current.current.x) * 0.04;
     current.current.y += (target.current.y - current.current.y) * 0.04;
 
     const t = state.clock.elapsedTime;
-    const driftAngle = Math.sin(t * 0.06) * 0.35;
-    const radius = 7;
-    camera.position.x = Math.sin(driftAngle) * radius + current.current.x;
+    // Studio orbit: very tight angle, slow, slightly further back so full logo fits
+    const angle = Math.sin(t * 0.05) * 0.14;
+    const radius = 7.5;
+    camera.position.x = Math.sin(angle) * radius + current.current.x;
     camera.position.y = current.current.y + 0.3;
-    camera.position.z = Math.cos(driftAngle) * radius;
-    camera.lookAt(1.0, 0, 0); // slight offset towards wordmark
+    camera.position.z = Math.cos(angle) * radius;
+    camera.lookAt(0, -0.1, 0);
   });
 
   return null;
@@ -206,15 +208,16 @@ function CameraRig() {
 export function HeroStage() {
   return (
     <Canvas
-      camera={{ position: [0, 0.3, 7], fov: 50 }}
+      shadows
+      camera={{ position: [0, 0.3, 7.5], fov: 38 }}
       gl={{
         alpha: true,
         antialias: true,
         powerPreference: "high-performance",
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 0.85,
+        toneMappingExposure: 0.95,
       }}
-      dpr={[1, 1.5]}
+      dpr={[1, 1.6]}
       style={{
         position: "absolute",
         inset: 0,
@@ -222,57 +225,84 @@ export function HeroStage() {
       }}
     >
       <Suspense fallback={null}>
-        {/* Lighting Studio — softer */}
-        <ambientLight intensity={0.25} />
+        {/* Studio Backdrop */}
+        <StudioBackdrop />
+
+        {/* Studio Lighting — gallery setup */}
+        {/* Key light from upper-front */}
         <directionalLight
-          position={[5, 6, 4]}
-          intensity={0.9}
-          color="#ffffff"
+          position={[3, 5, 4]}
+          intensity={1.4}
+          color="#fff8ee"
+          castShadow
+          shadow-mapSize-width={1024}
+          shadow-mapSize-height={1024}
         />
+        {/* Fill light from opposite side */}
         <directionalLight
-          position={[-4, 3, 2]}
+          position={[-4, 2, 3]}
           intensity={0.55}
-          color="#b8c4d0"
+          color="#aebccd"
         />
-        <pointLight position={[0, -3, 4]} intensity={0.3} color="#8a9ba8" />
+        {/* Rim light from behind */}
+        <directionalLight
+          position={[0, 2, -4]}
+          intensity={0.7}
+          color="#c7d2dd"
+        />
+        {/* Soft ambient */}
+        <ambientLight intensity={0.22} color="#aab4c2" />
 
-        {/* Environment for reflections */}
-        <Environment preset="studio" />
+        {/* Spotlight from above - gallery light hitting the wordmark */}
+        <spotLight
+          position={[0, 8, 3]}
+          angle={0.5}
+          penumbra={0.6}
+          intensity={0.9}
+          color="#fff5e3"
+          castShadow
+        />
 
-        {/* Centerpiece — Mark + Wordmark, both inside Float for breathing */}
+        {/* Environment for reflections — neutral studio */}
+        <Environment preset="warehouse" />
+
+        {/* Logo */}
         <Float
-          speed={1.2}
-          rotationIntensity={0.15}
-          floatIntensity={0.4}
-          floatingRange={[-0.05, 0.05]}
+          speed={1.0}
+          rotationIntensity={0.08}
+          floatIntensity={0.18}
+          floatingRange={[-0.04, 0.04]}
         >
-          <group position={[-1.4, 0, 0]}>
-            <GrossMark3D />
-          </group>
-          <GrossWordmark3D />
+          <LogoMesh />
         </Float>
 
-        {/* Atmospheric particles */}
-        <ParticleField />
+        {/* Floor with contact shadows */}
+        <ContactShadows
+          position={[0, -1.4, 0]}
+          opacity={0.55}
+          scale={12}
+          blur={2.4}
+          far={4}
+          color="#000000"
+        />
 
-        {/* Camera animation */}
+        {/* Camera */}
         <CameraRig />
 
-        {/* Postprocessing */}
+        {/* Postprocessing — restrained studio look */}
         <EffectComposer multisampling={2}>
           <Bloom
-            intensity={0.35}
-            luminanceThreshold={0.75}
-            luminanceSmoothing={0.85}
+            intensity={0.18}
+            luminanceThreshold={0.85}
+            luminanceSmoothing={0.9}
             mipmapBlur
           />
-          <ChromaticAberration
-            offset={[0.0005, 0.0005]}
-            radialModulation={false}
-            modulationOffset={0}
-            blendFunction={BlendFunction.NORMAL}
+          <DepthOfField
+            focusDistance={0.018}
+            focalLength={0.04}
+            bokehScale={2.5}
           />
-          <Vignette eskil={false} offset={0.15} darkness={0.55} />
+          <Vignette eskil={false} offset={0.12} darkness={0.5} />
         </EffectComposer>
       </Suspense>
     </Canvas>

@@ -30,6 +30,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.184.0",
+    "potrace": "^2.1.8",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
