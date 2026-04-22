@@ -8,31 +8,24 @@ import {
   Vignette,
   DepthOfField,
 } from "@react-three/postprocessing";
-import { useRef, useMemo, Suspense, useEffect, useState } from "react";
+import { useRef, useMemo, Suspense, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
 import { asset } from "@/lib/utils";
 
 /**
- * HeroStage v3 — Premium Architektur-Studio statt Space.
+ * HeroStage v4 — Studio mit Scroll-Choreographie.
  *
- * Vibe-Shift:
- * - Boden + ContactShadows: Logo "steht" in einem Studio
- * - Background-Gradient von oben (wie Hallenlicht)
- * - Studio-Spotlights wie eine Galerie
- * - Particles raus, statt subtle dust-textur
- * - Logo geladen via SVGLoader aus dem 1:1 traced original
- * - DepthOfField fuer Studio-Render-Look
+ * Bei Scroll-Progress 0 → 1 (sticky-section unscrollt → vollausgescrollt):
+ * - Wordmark "GROSS" fadet aus + slidet hoch raus
+ * - Mark wandert ins Bildzentrum (von -700 → 0)
+ * - Mark scaled hoch (~1.3x)
+ * - Material morpht: matt-metallic → polierter Bronze → klarer Reflektor
+ * - Camera zoomt sanft rein (z 7.5 → 5.0)
+ * - Auto-Rotation steigert sich
  *
- * Logo-Struktur:
- * - Mark (Wuerfel-Kubus mit innerem G) — extrudiert aus SVG-Pfad
- * - Wordmark "GROSS" — extrudiert aus SVG-Pfad
- * - Beide in derselben Skala wie Original
+ * Progress-Wert kommt vom externen Hook via ref (kein Prop-Drilling-RAF).
  */
-
-// ============================================================
-// LOGO GEOMETRY — loaded from public/gross-logo.svg
-// ============================================================
 
 interface LogoGroups {
   markGeo: THREE.BufferGeometry;
@@ -42,19 +35,12 @@ interface LogoGroups {
 function useLogoGeometry(): LogoGroups | null {
   const data = useLoader(SVGLoader, asset("/gross-logo.svg"));
   return useMemo(() => {
-    // The SVG has one path with many subpaths covering both mark + wordmark.
-    // The mark occupies x: 0-359, wordmark: x: 539-1700, viewBox 1701x409.
-    // We separate by the centroid X of each subpath.
     const path = data.paths[0];
     if (!path) return null;
-
     const allShapes = SVGLoader.createShapes(path);
-
     const markShapes: THREE.Shape[] = [];
     const wordmarkShapes: THREE.Shape[] = [];
-
     for (const shape of allShapes) {
-      // compute centroid X
       let sx = 0;
       const pts = shape.getPoints();
       for (const p of pts) sx += p.x;
@@ -62,9 +48,8 @@ function useLogoGeometry(): LogoGroups | null {
       if (sx < 450) markShapes.push(shape);
       else wordmarkShapes.push(shape);
     }
-
     const extrudeSettings = {
-      depth: 30, // SVG units, will scale down later
+      depth: 30,
       bevelEnabled: true,
       bevelThickness: 4,
       bevelSize: 3,
@@ -72,65 +57,118 @@ function useLogoGeometry(): LogoGroups | null {
       bevelSegments: 3,
       curveSegments: 8,
     };
-
-    const markGeoRaw = new THREE.ExtrudeGeometry(markShapes, extrudeSettings);
-    const wordmarkGeoRaw = new THREE.ExtrudeGeometry(wordmarkShapes, extrudeSettings);
-
-    // SVG has Y-down convention; Three.js Y-up. Flip Y.
-    markGeoRaw.scale(1, -1, 1);
-    wordmarkGeoRaw.scale(1, -1, 1);
-
-    // Center each geometry around its own centroid
-    markGeoRaw.computeBoundingBox();
-    wordmarkGeoRaw.computeBoundingBox();
-    const markCenter = new THREE.Vector3();
-    const wmCenter = new THREE.Vector3();
-    markGeoRaw.boundingBox!.getCenter(markCenter);
-    wordmarkGeoRaw.boundingBox!.getCenter(wmCenter);
-    markGeoRaw.translate(-markCenter.x, -markCenter.y, -markCenter.z);
-    wordmarkGeoRaw.translate(-wmCenter.x, -wmCenter.y, -wmCenter.z);
-
-    return { markGeo: markGeoRaw, wordmarkGeo: wordmarkGeoRaw };
+    const markGeo = new THREE.ExtrudeGeometry(markShapes, extrudeSettings);
+    const wordmarkGeo = new THREE.ExtrudeGeometry(wordmarkShapes, extrudeSettings);
+    markGeo.scale(1, -1, 1);
+    wordmarkGeo.scale(1, -1, 1);
+    markGeo.computeBoundingBox();
+    wordmarkGeo.computeBoundingBox();
+    const c1 = new THREE.Vector3();
+    const c2 = new THREE.Vector3();
+    markGeo.boundingBox!.getCenter(c1);
+    wordmarkGeo.boundingBox!.getCenter(c2);
+    markGeo.translate(-c1.x, -c1.y, -c1.z);
+    wordmarkGeo.translate(-c2.x, -c2.y, -c2.z);
+    return { markGeo, wordmarkGeo };
   }, [data]);
 }
 
 // ============================================================
-// LOGO MESH (Mark + Wordmark)
+// Material Morph helpers
 // ============================================================
 
-function LogoMesh() {
+const COLORS = {
+  matte: new THREE.Color("#f3f1ea"),
+  bronze: new THREE.Color("#c9a878"),
+  chrome: new THREE.Color("#dfe4ea"),
+};
+
+function lerpColor(out: THREE.Color, a: THREE.Color, b: THREE.Color, t: number) {
+  out.r = a.r + (b.r - a.r) * t;
+  out.g = a.g + (b.g - a.g) * t;
+  out.b = a.b + (b.b - a.b) * t;
+}
+
+// ============================================================
+// LOGO MESH with scroll-driven choreography
+// ============================================================
+
+function LogoMesh({ progressRef }: { progressRef: MutableRefObject<number> }) {
   const geo = useLogoGeometry();
   const groupRef = useRef<THREE.Group>(null);
+  const markRef = useRef<THREE.Mesh>(null);
+  const wordmarkRef = useRef<THREE.Mesh>(null);
+  const markMatRef = useRef<THREE.MeshPhysicalMaterial>(null);
+  const wordmarkMatRef = useRef<THREE.MeshPhysicalMaterial>(null);
+
+  // Eased current values — lerp to scroll target
+  const eased = useRef(0);
+
+  // Reusable color buffers
+  const markColor = useRef(new THREE.Color("#f3f1ea"));
+  const wordmarkColor = useRef(new THREE.Color("#ebe9e2"));
 
   useFrame((state) => {
-    if (!groupRef.current) return;
+    const target = progressRef.current;
+    eased.current += (target - eased.current) * 0.08;
+    const p = eased.current;
     const t = state.clock.elapsedTime;
-    // Very gentle rotation — studio piece, not toy
-    groupRef.current.rotation.y = Math.sin(t * 0.18) * 0.18;
-    groupRef.current.rotation.x = Math.sin(t * 0.12) * 0.04;
+
+    // Whole-group base rotation (subtle), plus increased rotation as p grows
+    if (groupRef.current) {
+      const baseY = Math.sin(t * 0.18) * 0.18;
+      const scrollY = p * Math.PI * 0.35;
+      groupRef.current.rotation.y = baseY + scrollY;
+      groupRef.current.rotation.x = Math.sin(t * 0.12) * 0.04;
+    }
+
+    // Mark: positions from -700 → 0, scale 1 → 1.4
+    if (markRef.current) {
+      const x = -700 * (1 - p);
+      const sc = 1 + p * 0.4;
+      markRef.current.position.x = x;
+      markRef.current.scale.setScalar(sc);
+    }
+
+    // Wordmark: fade out + slide up
+    if (wordmarkRef.current) {
+      wordmarkRef.current.position.y = p * 250;
+      wordmarkRef.current.scale.setScalar(Math.max(0.001, 1 - p * 0.3));
+      wordmarkRef.current.visible = p < 0.92;
+    }
+    if (wordmarkMatRef.current) {
+      wordmarkMatRef.current.opacity = Math.max(0, 1 - p * 1.4);
+      wordmarkMatRef.current.transparent = true;
+    }
+
+    // Material morph on mark: matte → bronze (0..0.5), bronze → chrome (0.5..1)
+    if (markMatRef.current) {
+      if (p < 0.5) {
+        const t01 = p / 0.5;
+        lerpColor(markColor.current, COLORS.matte, COLORS.bronze, t01);
+        markMatRef.current.metalness = 0.78 + 0.12 * t01;
+        markMatRef.current.roughness = 0.22 - 0.1 * t01;
+        markMatRef.current.clearcoat = 0.55 + 0.25 * t01;
+      } else {
+        const t01 = (p - 0.5) / 0.5;
+        lerpColor(markColor.current, COLORS.bronze, COLORS.chrome, t01);
+        markMatRef.current.metalness = 0.9 + 0.05 * t01;
+        markMatRef.current.roughness = 0.12 + 0.04 * t01;
+        markMatRef.current.clearcoat = 0.8 + 0.15 * t01;
+      }
+      markMatRef.current.color.copy(markColor.current);
+      markMatRef.current.envMapIntensity = 1.0 + p * 0.4;
+    }
   });
 
   if (!geo) return null;
-
-  // SVG units: viewBox 1701x409. Total composition ~1700 wide.
-  // Scale 0.0035 → ~5.95 units total width. Camera fov 42 sees ~5.0 units at z=6.5.
-  // We need 0.0028 to comfortably fit at 6.5 distance.
   const scale = 0.0028;
 
-  // Mark center is around x=180 in original SVG, wordmark center around x=1120.
-  // After centering each geometry, their internal origins are 0.
-  // We position them in the group to recreate the original side-by-side layout
-  // but slightly tighter for visual cohesion.
   return (
     <group ref={groupRef} scale={[scale, scale, scale]} position={[0, 0, 0]}>
-      {/* Mark — positioned left of center */}
-      <mesh
-        geometry={geo.markGeo}
-        position={[-700, 0, 0]}
-        castShadow
-        receiveShadow
-      >
+      <mesh ref={markRef} geometry={geo.markGeo} position={[-700, 0, 0]} castShadow receiveShadow>
         <meshPhysicalMaterial
+          ref={markMatRef}
           color="#f3f1ea"
           metalness={0.78}
           roughness={0.22}
@@ -139,20 +177,15 @@ function LogoMesh() {
           envMapIntensity={1.0}
         />
       </mesh>
-
-      {/* Wordmark — positioned right of center */}
-      <mesh
-        geometry={geo.wordmarkGeo}
-        position={[280, 0, 0]}
-        castShadow
-        receiveShadow
-      >
+      <mesh ref={wordmarkRef} geometry={geo.wordmarkGeo} position={[280, 0, 0]} castShadow receiveShadow>
         <meshPhysicalMaterial
+          ref={wordmarkMatRef}
           color="#ebe9e2"
           metalness={0.7}
           roughness={0.28}
           clearcoat={0.4}
           envMapIntensity={0.95}
+          transparent
         />
       </mesh>
     </group>
@@ -160,26 +193,13 @@ function LogoMesh() {
 }
 
 // ============================================================
-// STUDIO BACKDROP — subtle gradient backdrop wall
+// CAMERA RIG with scroll-zoom
 // ============================================================
 
-function StudioBackdrop() {
-  // Large plane behind the scene with a soft gradient material
-  return (
-    <mesh position={[0, 0, -8]} rotation={[0, 0, 0]}>
-      <planeGeometry args={[40, 24]} />
-      <meshStandardMaterial color="#0d1018" roughness={1} metalness={0} />
-    </mesh>
-  );
-}
-
-// ============================================================
-// CAMERA RIG — studio-style subtle drift + parallax
-// ============================================================
-
-function CameraRig() {
+function CameraRig({ progressRef }: { progressRef: MutableRefObject<number> }) {
   const target = useRef({ x: 0, y: 0 });
   const current = useRef({ x: 0, y: 0 });
+  const easedP = useRef(0);
   const { camera } = useThree();
 
   useFrame((state) => {
@@ -187,13 +207,16 @@ function CameraRig() {
     target.current.y = state.mouse.y * 0.18;
     current.current.x += (target.current.x - current.current.x) * 0.04;
     current.current.y += (target.current.y - current.current.y) * 0.04;
+    easedP.current += (progressRef.current - easedP.current) * 0.06;
 
     const t = state.clock.elapsedTime;
-    // Studio orbit: very tight angle, slow, slightly further back so full logo fits
-    const angle = Math.sin(t * 0.05) * 0.14;
-    const radius = 7.5;
+    const p = easedP.current;
+
+    // Radius shrinks from 7.5 → 5.0 as scroll progresses (zoom in)
+    const radius = 7.5 - p * 2.5;
+    const angle = Math.sin(t * 0.05) * (0.14 + p * 0.1);
     camera.position.x = Math.sin(angle) * radius + current.current.x;
-    camera.position.y = current.current.y + 0.3;
+    camera.position.y = current.current.y + 0.3 - p * 0.1;
     camera.position.z = Math.cos(angle) * radius;
     camera.lookAt(0, -0.1, 0);
   });
@@ -205,7 +228,7 @@ function CameraRig() {
 // MAIN STAGE
 // ============================================================
 
-export function HeroStage() {
+export function HeroStage({ progressRef }: { progressRef: MutableRefObject<number> }) {
   return (
     <Canvas
       shadows
@@ -225,83 +248,30 @@ export function HeroStage() {
       }}
     >
       <Suspense fallback={null}>
-        {/* Studio Backdrop */}
-        <StudioBackdrop />
+        <mesh position={[0, 0, -8]}>
+          <planeGeometry args={[40, 24]} />
+          <meshStandardMaterial color="#0d1018" roughness={1} metalness={0} />
+        </mesh>
 
-        {/* Studio Lighting — gallery setup */}
-        {/* Key light from upper-front */}
-        <directionalLight
-          position={[3, 5, 4]}
-          intensity={1.4}
-          color="#fff8ee"
-          castShadow
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-        />
-        {/* Fill light from opposite side */}
-        <directionalLight
-          position={[-4, 2, 3]}
-          intensity={0.55}
-          color="#aebccd"
-        />
-        {/* Rim light from behind */}
-        <directionalLight
-          position={[0, 2, -4]}
-          intensity={0.7}
-          color="#c7d2dd"
-        />
-        {/* Soft ambient */}
+        <directionalLight position={[3, 5, 4]} intensity={1.4} color="#fff8ee" castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
+        <directionalLight position={[-4, 2, 3]} intensity={0.55} color="#aebccd" />
+        <directionalLight position={[0, 2, -4]} intensity={0.7} color="#c7d2dd" />
         <ambientLight intensity={0.22} color="#aab4c2" />
+        <spotLight position={[0, 8, 3]} angle={0.5} penumbra={0.6} intensity={0.9} color="#fff5e3" castShadow />
 
-        {/* Spotlight from above - gallery light hitting the wordmark */}
-        <spotLight
-          position={[0, 8, 3]}
-          angle={0.5}
-          penumbra={0.6}
-          intensity={0.9}
-          color="#fff5e3"
-          castShadow
-        />
-
-        {/* Environment for reflections — neutral studio */}
         <Environment preset="warehouse" />
 
-        {/* Logo */}
-        <Float
-          speed={1.0}
-          rotationIntensity={0.08}
-          floatIntensity={0.18}
-          floatingRange={[-0.04, 0.04]}
-        >
-          <LogoMesh />
+        <Float speed={1.0} rotationIntensity={0.08} floatIntensity={0.18} floatingRange={[-0.04, 0.04]}>
+          <LogoMesh progressRef={progressRef} />
         </Float>
 
-        {/* Floor with contact shadows */}
-        <ContactShadows
-          position={[0, -1.4, 0]}
-          opacity={0.55}
-          scale={12}
-          blur={2.4}
-          far={4}
-          color="#000000"
-        />
+        <ContactShadows position={[0, -1.4, 0]} opacity={0.55} scale={12} blur={2.4} far={4} color="#000000" />
 
-        {/* Camera */}
-        <CameraRig />
+        <CameraRig progressRef={progressRef} />
 
-        {/* Postprocessing — restrained studio look */}
         <EffectComposer multisampling={2}>
-          <Bloom
-            intensity={0.18}
-            luminanceThreshold={0.85}
-            luminanceSmoothing={0.9}
-            mipmapBlur
-          />
-          <DepthOfField
-            focusDistance={0.018}
-            focalLength={0.04}
-            bokehScale={2.5}
-          />
+          <Bloom intensity={0.18} luminanceThreshold={0.85} luminanceSmoothing={0.9} mipmapBlur />
+          <DepthOfField focusDistance={0.018} focalLength={0.04} bokehScale={2.5} />
           <Vignette eskil={false} offset={0.12} darkness={0.5} />
         </EffectComposer>
       </Suspense>
