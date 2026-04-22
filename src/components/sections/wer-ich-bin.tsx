@@ -12,6 +12,7 @@ export function WerIchBin() {
       id="wer-ich-bin"
       index="01"
       eyebrow="Wer ich bin"
+      canvas="wireframe-mesh"
       title={
         <>
           Schreiner-Geselle.

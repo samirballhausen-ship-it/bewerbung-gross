@@ -1,40 +1,44 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { GrossMark } from "@/components/icons";
+import { asset } from "@/lib/utils";
 
 /**
- * Boot-Portal — 2.4s cinematischer Eintritt.
+ * Boot-Portal v2 — Hi-Tech CAD-Plotter Construction.
  *
- * Sequenz:
- * - 0.0–0.3s : Schwarzer Vollbildschirm, Zentral-Punkt atmet
- * - 0.3–0.7s : 220 Partikel-Explosion spiralig nach aussen mit Glow
- * - 0.7–1.2s : Partikel rotieren, kompaktieren langsam
- * - 1.2–1.7s : GROSS-Mark materialisiert, Partikel werden dimmer
- * - 1.7–2.0s : Wordmark "GROSS" fade-in, Tracking expandiert
- * - 2.0–2.4s : Vollstaendiger Loader Fade-Out, Hero wird sichtbar
+ * 4 Akte (3.6s gesamt):
+ * - Akt 1 (0–800ms):    Schwarz, technisches Raster fade-in, Achsenkreuz + Maße
+ * - Akt 2 (800–1900ms): Konstruktionslinien zeichnen sich (SVG stroke-dashoffset),
+ *                       Bemaßungspfeile + Hilfspunkte erscheinen
+ * - Akt 3 (1900–2800ms): Linien verdichten sich zur G-Form, Konturen werden bold
+ * - Akt 4 (2800–3600ms): Crossfade Konstruktion → echtes GROSS-Logo,
+ *                        Hero materialisiert
  *
- * Skips automatisch bei prefers-reduced-motion (instant). Sessionstorage:
- * Boot zeigt sich nur einmal pro Tab — Returning Visitors springen direkt rein.
+ * Skips bei prefers-reduced-motion. Sessionstorage: einmal pro Tab.
+ *
+ * Aesthetik: Engineering-Plotter, Sterile-Praezision, kein Magic-Glitter.
  */
-
-const PARTICLE_COUNT = 220;
-const PARTICLE_COUNT_MOBILE = 100;
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  glow: number;
-  phase: number; // initial spawn angle index
-}
 
 export function BootPortal({ onComplete }: { onComplete: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stage, setStage] = useState<0 | 1 | 2 | 3>(0); // 0=particles 1=mark 2=wordmark 3=fade
+  const [act, setAct] = useState<1 | 2 | 3 | 4 | 5>(1);
+
+  // Stage transitions via setTimeout — separate from RAF so canvas
+  // doesn't lose state on re-renders.
+  useEffect(() => {
+    const t1 = setTimeout(() => setAct(2), 800);
+    const t2 = setTimeout(() => setAct(3), 1900);
+    const t3 = setTimeout(() => setAct(4), 2800);
+    const t4 = setTimeout(() => setAct(5), 3300);
+    const t5 = setTimeout(() => onComplete(), 3700);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+    };
+  }, [onComplete]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -42,10 +46,7 @@ export function BootPortal({ onComplete }: { onComplete: () => void }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const isMobile = window.innerWidth < 768;
-    const count = isMobile ? PARTICLE_COUNT_MOBILE : PARTICLE_COUNT;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-
     let w = window.innerWidth;
     let h = window.innerHeight;
     canvas.width = w * dpr;
@@ -54,168 +55,250 @@ export function BootPortal({ onComplete }: { onComplete: () => void }) {
     canvas.style.height = `${h}px`;
     ctx.scale(dpr, dpr);
 
-    const cx = w / 2;
-    const cy = h / 2;
-
-    // Initialize particles at center, with spiral spawn velocity
-    const particles: Particle[] = Array.from({ length: count }, (_, i) => {
-      const angle = i * GOLDEN_ANGLE;
-      const speed = 0.6 + Math.random() * 1.4;
-      return {
-        x: cx,
-        y: cy,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        size: 0.6 + Math.random() * 1.4,
-        glow: 0.4 + Math.random() * 0.6,
-        phase: i,
-      };
-    });
-
+    const isMobile = w < 768;
+    const cellSize = isMobile ? 40 : 56;
     const start = performance.now();
     let raf = 0;
 
-    const loop = (now: number) => {
+    const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t);
+
+    const draw = (now: number) => {
       const t = now - start;
+      ctx.clearRect(0, 0, w, h);
 
-      // Stage transitions
-      if (t > 2000 && stage < 3) setStage(3);
-      else if (t > 1600 && stage < 2) setStage(2);
-      else if (t > 1100 && stage < 1) setStage(1);
+      // ===== AKT 1: Grid fade-in (0–800ms) =====
+      const gridProgress = Math.min(1, t / 800);
+      const gridAlpha = easeInOut(gridProgress) * 0.18;
 
-      // Background fade-fill (Trail)
-      ctx.fillStyle = "rgba(5, 7, 16, 0.18)";
-      ctx.fillRect(0, 0, w, h);
-
-      // Compute global progress for particle behaviour
-      const explodeProgress = Math.min(1, t / 700);
-      const compactProgress = Math.max(0, Math.min(1, (t - 700) / 500));
-      const dimProgress = Math.max(0, Math.min(1, (t - 1100) / 500));
-      const fadeProgress = Math.max(0, Math.min(1, (t - 2000) / 400));
-
-      // Center pulse (only first 300ms)
-      if (t < 350) {
-        const pulse = (Math.sin(t * 0.02) + 1) * 0.5;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 4 + pulse * 4, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(184, 196, 208, ${0.6 + pulse * 0.4})`;
-        ctx.shadowBlur = 24;
-        ctx.shadowColor = "rgba(184, 196, 208, 0.8)";
-        ctx.fill();
-        ctx.shadowBlur = 0;
+      ctx.strokeStyle = `rgba(184, 196, 208, ${gridAlpha})`;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      for (let x = (w / 2) % cellSize; x < w; x += cellSize) {
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
       }
-
-      // Particles
-      ctx.shadowBlur = 0;
-      for (const p of particles) {
-        // Phase 1: explode (0-700ms)
-        if (t < 700) {
-          p.x += p.vx;
-          p.y += p.vy;
-        }
-        // Phase 2: spiral compact (700-1100ms)
-        else if (t < 1100) {
-          const dx = p.x - cx;
-          const dy = p.y - cy;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const angle = Math.atan2(dy, dx) + 0.06; // slow rotation
-          const newDist = dist * (1 - compactProgress * 0.18); // gentle pull-in
-          p.x = cx + Math.cos(angle) * newDist;
-          p.y = cy + Math.sin(angle) * newDist;
-        }
-        // Phase 3: dim + slow drift outward
-        else if (t < 1700) {
-          const dx = p.x - cx;
-          const dy = p.y - cy;
-          const angle = Math.atan2(dy, dx) + 0.02;
-          const dist = Math.sqrt(dx * dx + dy * dy) * 1.005;
-          p.x = cx + Math.cos(angle) * dist;
-          p.y = cy + Math.sin(angle) * dist;
-        }
-        // Phase 4: scatter upward (light dust effect)
-        else {
-          p.x += p.vx * 0.3;
-          p.y -= 0.6 + Math.random() * 0.4;
-        }
-
-        // Render
-        const baseAlpha = explodeProgress * (1 - dimProgress * 0.7) * (1 - fadeProgress);
-        const alpha = p.glow * baseAlpha;
-        if (alpha > 0.02) {
-          ctx.fillStyle = `rgba(184, 196, 208, ${alpha})`;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-          ctx.fill();
-        }
+      for (let y = (h / 2) % cellSize; y < h; y += cellSize) {
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
       }
+      ctx.stroke();
 
-      if (t < 2400) {
-        raf = requestAnimationFrame(loop);
-      } else {
-        onComplete();
+      // Stronger crosshair through center
+      const cx = w / 2;
+      const cy = h / 2;
+      const crosshairAlpha = easeInOut(Math.min(1, (t - 200) / 600)) * 0.45;
+      ctx.strokeStyle = `rgba(184, 196, 208, ${crosshairAlpha})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, 0);
+      ctx.lineTo(cx, h);
+      ctx.moveTo(0, cy);
+      ctx.lineTo(w, cy);
+      ctx.stroke();
+
+      // ===== AKT 2: Konstruktionslinien (800–1900ms) — handled in SVG layer =====
+
+      // ===== AKT 3: Verdichtung (1900–2800ms) — handled in SVG layer =====
+
+      // ===== AKT 4: Stage 4 fadeout grid =====
+      // (grid stays but slightly fades when act 4)
+
+      if (t < 3700) {
+        raf = requestAnimationFrame(draw);
       }
     };
 
-    raf = requestAnimationFrame(loop);
+    raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [onComplete, stage]);
+  }, []);
 
+  // Construction-Lines as SVG (animated via CSS stroke-dashoffset)
   return (
     <div
       className="fixed inset-0 z-[100] bg-void-900 overflow-hidden"
-      data-stage={stage}
+      data-act={act}
       style={{
-        opacity: stage === 3 ? 0 : 1,
-        transition: "opacity 400ms cubic-bezier(0.65, 0, 0.35, 1)",
-        pointerEvents: stage === 3 ? "none" : "auto",
+        opacity: act === 5 ? 0 : 1,
+        transition: "opacity 600ms cubic-bezier(0.65, 0, 0.35, 1)",
+        pointerEvents: act === 5 ? "none" : "auto",
       }}
     >
       <canvas ref={canvasRef} className="absolute inset-0" aria-hidden="true" />
 
-      {/* Mark — fades in at stage 1 */}
-      <div
-        className="absolute inset-0 flex items-center justify-center pointer-events-none"
-        style={{
-          opacity: stage >= 1 ? 1 : 0,
-          transform: stage >= 1 ? "scale(1)" : "scale(0.85)",
-          transition:
-            "opacity 700ms cubic-bezier(0.22, 1, 0.36, 1), transform 700ms cubic-bezier(0.22, 1, 0.36, 1)",
-        }}
-      >
-        <div className="text-platinum drop-shadow-[0_0_40px_rgba(184,196,208,0.4)]">
-          <GrossMark size={88} />
+      {/* SVG Konstruktion — zentriert */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <svg
+          width="320"
+          height="320"
+          viewBox="0 0 320 320"
+          className="boot-svg"
+          aria-hidden="true"
+          style={{
+            opacity: act >= 4 ? 0 : 1,
+            transition: "opacity 500ms cubic-bezier(0.22, 1, 0.36, 1)",
+          }}
+        >
+          {/* Bezugspunkte — kleine Plus-Marker */}
+          {act >= 2 &&
+            [
+              [80, 80],
+              [240, 80],
+              [80, 240],
+              [240, 240],
+              [160, 160],
+            ].map(([px, py], i) => (
+              <g
+                key={i}
+                className="boot-point"
+                style={{ animationDelay: `${850 + i * 60}ms` }}
+              >
+                <line x1={px - 6} y1={py} x2={px + 6} y2={py} stroke="#b8c4d0" strokeWidth="1" />
+                <line x1={px} y1={py - 6} x2={px} y2={py + 6} stroke="#b8c4d0" strokeWidth="1" />
+              </g>
+            ))}
+
+          {/* Bounding-Box */}
+          {act >= 2 && (
+            <rect
+              x="60"
+              y="60"
+              width="200"
+              height="200"
+              fill="none"
+              stroke="rgba(184, 196, 208, 0.35)"
+              strokeWidth="0.6"
+              strokeDasharray="3 4"
+              className="boot-stroke"
+              pathLength={1000}
+              style={{ animationDelay: "900ms" }}
+            />
+          )}
+
+          {/* Bemaßungspfeile rechts */}
+          {act >= 2 && (
+            <g
+              opacity={act >= 4 ? 0 : 0.6}
+              style={{ transition: "opacity 400ms" }}
+            >
+              <line x1="278" y1="60" x2="278" y2="260" stroke="#b8c4d0" strokeWidth="0.5" />
+              <line x1="274" y1="60" x2="282" y2="60" stroke="#b8c4d0" strokeWidth="0.5" />
+              <line x1="274" y1="260" x2="282" y2="260" stroke="#b8c4d0" strokeWidth="0.5" />
+              <text x="290" y="164" fill="#b8c4d0" fontSize="9" fontFamily="monospace">
+                200
+              </text>
+            </g>
+          )}
+
+          {/* Bemaßung unten */}
+          {act >= 2 && (
+            <g
+              opacity={act >= 4 ? 0 : 0.6}
+              style={{ transition: "opacity 400ms" }}
+            >
+              <line x1="60" y1="278" x2="260" y2="278" stroke="#b8c4d0" strokeWidth="0.5" />
+              <line x1="60" y1="274" x2="60" y2="282" stroke="#b8c4d0" strokeWidth="0.5" />
+              <line x1="260" y1="274" x2="260" y2="282" stroke="#b8c4d0" strokeWidth="0.5" />
+              <text x="155" y="294" fill="#b8c4d0" fontSize="9" fontFamily="monospace">
+                200
+              </text>
+            </g>
+          )}
+
+          {/* G-Konstruktion: outer arc + inner accent */}
+          {act >= 2 && (
+            <>
+              {/* Outer G-arc — opens to the right */}
+              <path
+                d="M 230 90 A 70 70 0 1 0 230 230"
+                fill="none"
+                stroke="#e8e6df"
+                strokeWidth={act >= 3 ? 5 : 1.4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                pathLength={1000}
+                className="boot-stroke"
+                style={{
+                  animationDelay: "1000ms",
+                  transition: "stroke-width 700ms cubic-bezier(0.22, 1, 0.36, 1)",
+                }}
+              />
+              {/* Inner horizontal stroke — the iconic "G-bar" */}
+              <line
+                x1="160"
+                y1="160"
+                x2="230"
+                y2="160"
+                stroke="#e8e6df"
+                strokeWidth={act >= 3 ? 5 : 1.4}
+                strokeLinecap="round"
+                pathLength={1000}
+                className="boot-stroke"
+                style={{
+                  animationDelay: "1500ms",
+                  transition: "stroke-width 700ms cubic-bezier(0.22, 1, 0.36, 1)",
+                }}
+              />
+              {/* End-cap dot */}
+              <circle
+                cx="230"
+                cy="160"
+                r={act >= 3 ? 4 : 2}
+                fill="#e8e6df"
+                opacity={act >= 2 ? 1 : 0}
+                style={{ transition: "r 600ms cubic-bezier(0.22, 1, 0.36, 1)" }}
+              />
+            </>
+          )}
+        </svg>
+
+        {/* Echtes Logo — crossfaded in act 4 */}
+        <img
+          src={asset("/gross-logo.png")}
+          alt=""
+          aria-hidden="true"
+          width={280}
+          height={67}
+          className="absolute"
+          style={{
+            opacity: act >= 4 ? 1 : 0,
+            transform: act >= 4 ? "scale(1)" : "scale(0.92)",
+            transition:
+              "opacity 700ms cubic-bezier(0.22, 1, 0.36, 1), transform 800ms cubic-bezier(0.22, 1, 0.36, 1)",
+            filter: "invert(1) brightness(2.5) contrast(1.05) drop-shadow(0 0 30px rgba(184,196,208,0.4))",
+          }}
+        />
+      </div>
+
+      {/* Top-Left: spec annotation */}
+      <div className="absolute top-8 left-8 font-mono text-[0.6rem] tracking-[0.32em] uppercase text-bone-500 leading-relaxed">
+        <div>SAMIR.BALLHAUSEN.WORKS</div>
+        <div>REV-2026.04 · INITIATIVBEWERBUNG</div>
+      </div>
+
+      {/* Top-Right: ticking spec */}
+      <div className="absolute top-8 right-8 font-mono text-[0.6rem] tracking-[0.32em] uppercase text-bone-500 text-right">
+        <div>STATUS · LOADING</div>
+        <div className="text-platinum mt-1">
+          {act === 1 && "GRID INIT"}
+          {act === 2 && "REFERENCE POINTS"}
+          {act === 3 && "CONSTRUCT WORDMARK"}
+          {act >= 4 && "READY"}
         </div>
       </div>
 
-      {/* Wordmark — fades in at stage 2, tracking expands */}
-      <div
-        className="absolute inset-x-0 bottom-1/2 mb-[-100px] flex justify-center pointer-events-none"
-        style={{
-          opacity: stage >= 2 ? 1 : 0,
-          transition: "opacity 500ms cubic-bezier(0.22, 1, 0.36, 1)",
-        }}
-      >
-        <span
-          className="font-display font-bold uppercase text-bone-100 text-2xl"
-          style={{
-            letterSpacing: stage >= 2 ? "0.18em" : "0em",
-            transition: "letter-spacing 800ms cubic-bezier(0.22, 1, 0.36, 1)",
-          }}
-        >
-          GROSS
-        </span>
-      </div>
-
-      {/* Subtle skip hint — appears at 1.4s */}
-      <div
-        className="absolute bottom-10 left-1/2 -translate-x-1/2 pointer-events-none"
-        style={{
-          opacity: stage >= 1 ? 0.4 : 0,
-          transition: "opacity 600ms cubic-bezier(0.22, 1, 0.36, 1)",
-        }}
-      >
-        <span className="font-mono text-[0.6rem] tracking-[0.4em] text-bone-500 uppercase">
-          Initiativbewerbung wird vorbereitet
+      {/* Bottom: progress bar */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
+        <div className="w-48 h-px bg-bone-500/20 relative overflow-hidden">
+          <div
+            className="absolute inset-y-0 left-0 bg-platinum"
+            style={{
+              width: `${Math.min(100, (act - 1) * 33 + 8)}%`,
+              transition: "width 700ms cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+          />
+        </div>
+        <span className="font-mono text-[0.55rem] tracking-[0.4em] text-bone-500 uppercase">
+          GROSS · MESSE &amp; EVENT
         </span>
       </div>
     </div>
@@ -231,20 +314,22 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const seen = sessionStorage.getItem("gross_booted") === "1";
+    const seen = sessionStorage.getItem("gross_booted_v2") === "1";
     if (reduced || seen) {
       setBooted(true);
     } else {
       setBooted(false);
+      // Lock scroll while boot is on
+      document.body.style.overflow = "hidden";
     }
   }, []);
 
   const handleComplete = () => {
-    sessionStorage.setItem("gross_booted", "1");
+    sessionStorage.setItem("gross_booted_v2", "1");
+    document.body.style.overflow = "";
     setBooted(true);
   };
 
-  // SSR + initial render before hydration: render children, no boot.
   if (booted === null) return <>{children}</>;
 
   return (

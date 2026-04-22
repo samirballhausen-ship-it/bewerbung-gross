@@ -335,6 +335,70 @@ body {
 }
 
 /* ============================================================
+   BOOT PORTAL v2 — CAD CONSTRUCTION
+   SVG strokes self-draw via stroke-dashoffset animation.
+   ============================================================ */
+
+@keyframes boot-stroke-draw {
+  0% {
+    stroke-dashoffset: 1000;
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.9;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.95;
+  }
+}
+
+@keyframes boot-point-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.4);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.boot-stroke {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  opacity: 0;
+  animation: boot-stroke-draw 1100ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+.boot-point {
+  opacity: 0;
+  transform-origin: center;
+  animation: boot-point-pop 400ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* ============================================================
+   SECTION CANVAS LAYERS — pro Sektion eigene Hintergrund-Schicht
+   ============================================================ */
+
+.section-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.6;
+}
+
+.section-canvas + * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ============================================================
    CURSOR-AWARE HIGHLIGHT (subtil, optional via JS data-cursor)
    ============================================================ */
 

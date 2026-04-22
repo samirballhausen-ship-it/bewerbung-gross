@@ -39,6 +39,7 @@ export function WasIchMitbringe() {
       id="was-ich-mitbringe"
       index="02"
       eyebrow="Was ich mitbringe"
+      canvas="plotter-grid"
       title={
         <>
           Vier Felder,

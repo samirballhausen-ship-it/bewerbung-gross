@@ -32,6 +32,7 @@ export function WieIchDenke() {
       id="cases"
       index="05"
       eyebrow="Wie ich denke"
+      canvas="wireframe-mesh"
       title={
         <>
           Drei Beweise,

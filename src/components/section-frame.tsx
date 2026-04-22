@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { SectionCanvas } from "@/components/section-canvas";
+
+type CanvasVariant = "wireframe-mesh" | "plotter-grid" | "particle-field" | "blueprint-rays";
 
 interface SectionFrameProps {
   id: string;
@@ -9,6 +12,7 @@ interface SectionFrameProps {
   children: ReactNode;
   className?: string;
   align?: "left" | "right";
+  canvas?: CanvasVariant;
 }
 
 /**
@@ -24,16 +28,18 @@ export function SectionFrame({
   children,
   className,
   align = "left",
+  canvas,
 }: SectionFrameProps) {
   return (
     <section
       id={id}
       className={cn(
-        "relative w-full px-6 py-32 md:px-12 md:py-44 lg:px-20",
+        "relative w-full px-6 py-32 md:px-12 md:py-44 lg:px-20 overflow-hidden",
         className
       )}
     >
-      <div className="mx-auto grid max-w-[1440px] grid-cols-12 gap-x-6 gap-y-12 md:gap-x-8">
+      {canvas && <SectionCanvas variant={canvas} />}
+      <div className="relative mx-auto grid max-w-[1440px] grid-cols-12 gap-x-6 gap-y-12 md:gap-x-8" style={{ zIndex: 1 }}>
         {/* Index-Marker oben links — wie Kapitel-Nummer im Magazin */}
         <header
           className={cn(

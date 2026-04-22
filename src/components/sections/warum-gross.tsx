@@ -30,6 +30,7 @@ export function WarumGross() {
       id="warum-gross"
       index="03"
       eyebrow="Warum GROSS"
+      canvas="blueprint-rays"
       title={
         <>
           Drei Punkte

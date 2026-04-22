@@ -32,6 +32,7 @@ export function WasIchTunWuerde() {
       id="rolle"
       index="04"
       eyebrow="Was ich für euch tun würde"
+      canvas="particle-field"
       title={
         <>
           Ein Vorschlag,

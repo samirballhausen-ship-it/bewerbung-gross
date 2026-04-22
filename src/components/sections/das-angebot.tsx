@@ -12,6 +12,7 @@ export function DasAngebot() {
       id="angebot"
       index="06"
       eyebrow="Das Angebot"
+      canvas="blueprint-rays"
       title={
         <>
           Sachlich,
