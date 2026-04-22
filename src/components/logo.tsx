@@ -42,10 +42,9 @@ export function Logo({
         style={{
           height: s.h,
           width: "auto",
-          filter:
-            tone === "light"
-              ? "invert(1) brightness(2.5) contrast(1.05)"
-              : "none",
+          // brightness(0) → black, invert(1) → white. Robuster als invert allein
+          // bei sehr dunklen PNGs.
+          filter: tone === "light" ? "brightness(0) invert(1)" : "none",
         }}
       />
       {sub && (

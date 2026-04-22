@@ -1,154 +1,94 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
-import { SplitText } from "@/components/split-text";
-import { Magnetic } from "@/components/magnetic";
-import { GrossMark, PfeilLong } from "@/components/icons";
 
-const MORPH_TOKENS = [
-  "Schreiner. Zeichner.",
-  "Ladenbau im Blut.",
-  "Möglichmacher.",
-];
+const HeroStage = dynamic(
+  () => import("@/components/hero-stage").then((m) => m.HeroStage),
+  { ssr: false }
+);
 
 /**
- * HERO 00 — Cinematic first frame.
+ * HERO 00 — Centerpiece-World statt Text-Hero.
  *
- * Layer:
- * - Volumetric breathing aura (CSS) — schon in globals.css
- * - Floating drift-lines (CSS keyframes)
- * - Initial Headline mit SplitText buchstabenweise (Samir Ballhausen)
- * - Sub-Headline morpht durch 3 Tokens
- * - Magnetic CTA-Buttons
- * - Discrete Top-Mark in der oberen rechten Ecke (Spiegelt Nav-Logo)
+ * 3D Wireframe-Frame mit zentralem G-Glyph schwebt im Raum.
+ * Camera-Drift + Mouse-Parallax. Atmosphaerische Particle-Wolke.
+ *
+ * KEINE Inhalts-Texte mehr im Hero — nur Bottom-Anker mit Eyebrow,
+ * Side-Marker, Scroll-Hint. Inhalte kommen spaeter als floatende
+ * Panels die punktuell andocken.
  */
 export function Hero() {
-  const [tokenIndex, setTokenIndex] = useState(0);
-  const [phase, setPhase] = useState<"in" | "out">("in");
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    let mounted = true;
-    const tick = () => {
-      if (!mounted) return;
-      setPhase("out");
-      setTimeout(() => {
-        if (!mounted) return;
-        setTokenIndex((i) => (i + 1) % MORPH_TOKENS.length);
-        setPhase("in");
-      }, 700);
-    };
-
-    const interval = setInterval(tick, 3600);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, []);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   return (
     <section
       id="hero"
-      className="relative flex min-h-[100dvh] w-full items-center overflow-hidden bg-volumetric bg-grain"
+      className="relative w-full h-[100dvh] overflow-hidden bg-volumetric"
     >
-      {/* Layered Aura */}
-      <div className="hero-aura" />
-      <div className="hero-aura-secondary" />
+      {/* 3D Stage — fills the section */}
+      {mounted && (
+        <div className="absolute inset-0">
+          <HeroStage />
+        </div>
+      )}
 
-      {/* Drift Lines — sehr subtile horizontale Lichtspuren */}
-      <div className="hero-drift-lines" aria-hidden="true">
-        <span style={{ animationDelay: "0s",   top: "32%" }} />
-        <span style={{ animationDelay: "4s",   top: "58%" }} />
-        <span style={{ animationDelay: "8s",   top: "76%" }} />
-      </div>
+      {/* Subtle film-grain overlay */}
+      <div className="absolute inset-0 bg-grain pointer-events-none" />
 
-      {/* Centerpiece */}
-      <div className="relative z-[2] mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20">
-        <div className="grid grid-cols-12 gap-6 items-end">
-          <div className="col-span-12 lg:col-span-10">
-            <div className="flex items-center gap-4 mb-12">
-              <span className="h-px w-10 bg-platinum/60" />
-              <span className="text-eyebrow">
-                Initiativbewerbung · Akt 00
-              </span>
-            </div>
-
-            <h1
-              className="font-display text-display-xl text-bone-100"
-              aria-label="Samir Ballhausen"
-            >
-              <SplitText text="Samir" delay={300} step={36} />
-              <br />
-              <SplitText text="Ballhausen" delay={600} step={36} />
-            </h1>
-
-            <div
-              className="mt-6 font-display text-display-md text-platinum max-w-[20ch] h-[1.2em]"
-              aria-live="polite"
-            >
-              <span
-                className="inline-block transition-all duration-700"
-                style={{
-                  opacity: phase === "in" ? 1 : 0,
-                  transform: phase === "in" ? "translateY(0)" : "translateY(0.3em)",
-                  filter: phase === "in" ? "blur(0px)" : "blur(6px)",
-                }}
-              >
-                {MORPH_TOKENS[tokenIndex]}
-              </span>
-            </div>
-
-            <p className="text-lede mt-12 max-w-[44ch] text-bone-300">
-              Diese Seite ist keine Mappe. Sie ist eine Begegnung —
-              auf Augenhöhe, in eurem Tempo, mit allem was ich für
-              euch mitbringen würde.
-            </p>
-
-            <div className="mt-16 flex flex-col sm:flex-row gap-4 sm:gap-8 sm:items-center">
-              <Magnetic strength={0.35}>
-                <a
-                  href="#angebot"
-                  className="group inline-flex items-center gap-4 border border-bone-200/40 px-8 py-5 text-bone-100 hover:bg-bone-100 hover:text-void-900 transition-colors duration-700"
-                >
-                  <span className="font-display text-base">Das Angebot lesen</span>
-                  <PfeilLong size={48} className="opacity-70 group-hover:opacity-100" />
-                </a>
-              </Magnetic>
-              <Magnetic strength={0.25}>
-                <a
-                  href="/kontakt/"
-                  className="font-mono text-[0.7rem] tracking-[0.32em] uppercase text-bone-400 hover:text-bone-100 transition-colors"
-                >
-                  Direkt Kontakt →
-                </a>
-              </Magnetic>
-            </div>
-          </div>
-
-          <div className="col-span-12 lg:col-span-2 flex flex-col gap-2 lg:items-end mt-12 lg:mt-0">
-            <span className="font-mono text-[0.65rem] tracking-[0.32em] text-bone-500 uppercase">
-              Hofheim a. Ts.
-            </span>
-            <span className="font-mono text-[0.65rem] tracking-[0.32em] text-bone-500 uppercase">
-              ab Juli 2026
-            </span>
-            <span className="font-mono text-[0.65rem] tracking-[0.32em] text-bone-500 uppercase">
-              2 Tage / Woche
-            </span>
-            <div className="mt-6 text-platinum/40 hidden lg:block">
-              <GrossMark size={36} />
-            </div>
-          </div>
+      {/* Top-left annotation */}
+      <div className="absolute top-24 left-6 md:left-12 lg:left-20 z-[2] pointer-events-none">
+        <div className="font-mono text-[0.6rem] tracking-[0.4em] text-bone-500 uppercase mb-1">
+          AKT 00 · ANSICHT
+        </div>
+        <div className="font-mono text-[0.6rem] tracking-[0.4em] text-platinum uppercase">
+          STRUKTUR · ROTATION
         </div>
       </div>
 
-      {/* Scroll Hint */}
-      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-[2] flex flex-col items-center gap-3">
-        <span className="font-mono text-[0.6rem] tracking-[0.4em] text-bone-500 uppercase">
+      {/* Top-right annotation */}
+      <div className="absolute top-24 right-6 md:right-12 lg:right-20 z-[2] text-right pointer-events-none">
+        <div className="font-mono text-[0.6rem] tracking-[0.4em] text-bone-500 uppercase mb-1">
+          INITIATIVBEWERBUNG
+        </div>
+        <div className="font-mono text-[0.6rem] tracking-[0.4em] text-bone-400 uppercase">
+          SAMIR BALLHAUSEN
+        </div>
+      </div>
+
+      {/* Bottom: anchor — minimal, kein Hero-Headline */}
+      <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-[2] flex flex-col items-center gap-4 pointer-events-none">
+        <div className="font-mono text-[0.55rem] tracking-[0.5em] text-bone-500 uppercase">
+          Hofheim a. Ts. · Juli 2026
+        </div>
+        <div className="font-display text-sm tracking-[0.32em] uppercase text-bone-200">
+          die Begegnung
+        </div>
+        <div className="h-12 w-px bg-gradient-to-b from-bone-500/60 to-transparent animate-pulse-line mt-4" />
+        <div className="font-mono text-[0.5rem] tracking-[0.4em] text-bone-500 uppercase">
           Scroll
-        </span>
-        <div className="h-12 w-px bg-gradient-to-b from-bone-500/60 to-transparent animate-pulse-line" />
+        </div>
+      </div>
+
+      {/* Side-marker left */}
+      <div className="absolute left-6 md:left-12 lg:left-20 top-1/2 -translate-y-1/2 z-[2] hidden md:block pointer-events-none">
+        <div
+          className="font-mono text-[0.55rem] tracking-[0.4em] text-bone-500 uppercase"
+          style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+        >
+          GROSS · MESSE &amp; EVENT
+        </div>
+      </div>
+
+      {/* Side-marker right */}
+      <div className="absolute right-6 md:right-12 lg:right-20 top-1/2 -translate-y-1/2 z-[2] hidden md:block pointer-events-none">
+        <div
+          className="font-mono text-[0.55rem] tracking-[0.4em] text-platinum uppercase"
+          style={{ writingMode: "vertical-rl" }}
+        >
+          REV · 2026.04
+        </div>
       </div>
     </section>
   );

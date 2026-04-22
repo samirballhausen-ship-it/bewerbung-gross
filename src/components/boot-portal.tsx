@@ -21,23 +21,24 @@ import { asset } from "@/lib/utils";
 
 export function BootPortal({ onComplete }: { onComplete: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [act, setAct] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [act, setAct] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1);
 
   // Stage transitions via setTimeout — separate from RAF so canvas
   // doesn't lose state on re-renders.
+  // Akt 5 = Logo zeigt sich gross, scaled bis 640px, haelt fest
+  // Akt 6 = Tueroeffnung (top/bottom split, Hero dahinter sichtbar)
+  // Akt 7 = Boot raus, Hero uebernimmt
   useEffect(() => {
-    const t1 = setTimeout(() => setAct(2), 800);
-    const t2 = setTimeout(() => setAct(3), 1900);
-    const t3 = setTimeout(() => setAct(4), 2800);
-    const t4 = setTimeout(() => setAct(5), 3300);
-    const t5 = setTimeout(() => onComplete(), 3700);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(t4);
-      clearTimeout(t5);
-    };
+    const timers = [
+      setTimeout(() => setAct(2), 700),
+      setTimeout(() => setAct(3), 1700),
+      setTimeout(() => setAct(4), 2500), // crossfade auf echtes Logo
+      setTimeout(() => setAct(5), 3300), // Logo wird gross, haelt
+      setTimeout(() => setAct(6), 4400), // Tueroeffnung
+      setTimeout(() => setAct(7), 5400), // Boot disappears
+      setTimeout(() => onComplete(), 5800),
+    ];
+    return () => timers.forEach(clearTimeout);
   }, [onComplete]);
 
   useEffect(() => {
@@ -103,7 +104,7 @@ export function BootPortal({ onComplete }: { onComplete: () => void }) {
       // ===== AKT 4: Stage 4 fadeout grid =====
       // (grid stays but slightly fades when act 4)
 
-      if (t < 3700) {
+      if (t < 5800) {
         raf = requestAnimationFrame(draw);
       }
     };
@@ -112,17 +113,60 @@ export function BootPortal({ onComplete }: { onComplete: () => void }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Construction-Lines as SVG (animated via CSS stroke-dashoffset)
+  // Doors slide apart in Akt 6
+  const doorTransform = act >= 6 ? "translateY(-110%)" : "translateY(0)";
+  const doorTransformBottom = act >= 6 ? "translateY(110%)" : "translateY(0)";
+
   return (
     <div
-      className="fixed inset-0 z-[100] bg-void-900 overflow-hidden"
+      className="fixed inset-0 z-[100] overflow-hidden"
       data-act={act}
       style={{
-        opacity: act === 5 ? 0 : 1,
-        transition: "opacity 600ms cubic-bezier(0.65, 0, 0.35, 1)",
-        pointerEvents: act === 5 ? "none" : "auto",
+        opacity: act === 7 ? 0 : 1,
+        transition: "opacity 400ms cubic-bezier(0.65, 0, 0.35, 1)",
+        pointerEvents: act >= 7 ? "none" : "auto",
+        background: "transparent",
       }}
     >
+      {/* TOP DOOR — slides up in Akt 6 */}
+      <div
+        className="absolute inset-x-0 top-0 h-1/2 bg-void-900 overflow-hidden"
+        style={{
+          transform: doorTransform,
+          transition: "transform 1100ms cubic-bezier(0.83, 0, 0.17, 1)",
+          willChange: "transform",
+        }}
+      >
+        {/* Door edge — thin platinum line at the bottom */}
+        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-platinum to-transparent opacity-80" />
+      </div>
+
+      {/* BOTTOM DOOR — slides down in Akt 6 */}
+      <div
+        className="absolute inset-x-0 bottom-0 h-1/2 bg-void-900 overflow-hidden"
+        style={{
+          transform: doorTransformBottom,
+          transition: "transform 1100ms cubic-bezier(0.83, 0, 0.17, 1)",
+          willChange: "transform",
+        }}
+      >
+        {/* Door edge — thin platinum line at the top */}
+        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-platinum to-transparent opacity-80" />
+      </div>
+
+      {/* Door-content overlay — everything renders inside the doors so it splits with them */}
+      <div className="absolute inset-0 pointer-events-none">
+      </div>
+
+      {/* All content inside this container — independent of doors */}
+      <div
+        className="absolute inset-0"
+        style={{
+          opacity: act >= 6 ? 0 : 1,
+          transition: "opacity 600ms cubic-bezier(0.83, 0, 0.17, 1) 100ms",
+          pointerEvents: act >= 6 ? "none" : "auto",
+        }}
+      >
       <canvas ref={canvasRef} className="absolute inset-0" aria-hidden="true" />
 
       {/* SVG Konstruktion — zentriert */}
@@ -251,20 +295,21 @@ export function BootPortal({ onComplete }: { onComplete: () => void }) {
           )}
         </svg>
 
-        {/* Echtes Logo — crossfaded in act 4 */}
+        {/* Echtes Logo — crossfaded in act 4, dann scaled big in act 5 */}
         <img
           src={asset("/gross-logo.png")}
           alt=""
           aria-hidden="true"
-          width={280}
-          height={67}
           className="absolute"
           style={{
+            width: act >= 5 ? "min(640px, 70vw)" : "280px",
+            height: "auto",
             opacity: act >= 4 ? 1 : 0,
-            transform: act >= 4 ? "scale(1)" : "scale(0.92)",
+            transform: act >= 5 ? "scale(1.15)" : act >= 4 ? "scale(1)" : "scale(0.92)",
             transition:
-              "opacity 700ms cubic-bezier(0.22, 1, 0.36, 1), transform 800ms cubic-bezier(0.22, 1, 0.36, 1)",
-            filter: "invert(1) brightness(2.5) contrast(1.05) drop-shadow(0 0 30px rgba(184,196,208,0.4))",
+              "opacity 700ms cubic-bezier(0.22, 1, 0.36, 1), width 1100ms cubic-bezier(0.22, 1, 0.36, 1), transform 1100ms cubic-bezier(0.22, 1, 0.36, 1)",
+            filter:
+              "brightness(0) invert(1) drop-shadow(0 0 50px rgba(184,196,208,0.5)) drop-shadow(0 0 100px rgba(184,196,208,0.25))",
           }}
         />
       </div>
@@ -292,7 +337,7 @@ export function BootPortal({ onComplete }: { onComplete: () => void }) {
           <div
             className="absolute inset-y-0 left-0 bg-platinum"
             style={{
-              width: `${Math.min(100, (act - 1) * 33 + 8)}%`,
+              width: `${Math.min(100, (act - 1) * 20 + 8)}%`,
               transition: "width 700ms cubic-bezier(0.22, 1, 0.36, 1)",
             }}
           />
@@ -300,6 +345,7 @@ export function BootPortal({ onComplete }: { onComplete: () => void }) {
         <span className="font-mono text-[0.55rem] tracking-[0.4em] text-bone-500 uppercase">
           GROSS · MESSE &amp; EVENT
         </span>
+      </div>
       </div>
     </div>
   );
@@ -314,7 +360,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const seen = sessionStorage.getItem("gross_booted_v2") === "1";
+    const seen = sessionStorage.getItem("gross_booted_v3") === "1";
     if (reduced || seen) {
       setBooted(true);
     } else {
@@ -325,7 +371,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleComplete = () => {
-    sessionStorage.setItem("gross_booted_v2", "1");
+    sessionStorage.setItem("gross_booted_v3", "1");
     document.body.style.overflow = "";
     setBooted(true);
   };
