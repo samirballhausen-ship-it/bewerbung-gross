@@ -1,119 +1,145 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Float, Environment, Text3D, Center } from "@react-three/drei";
+import { EffectComposer, Bloom, ChromaticAberration, Vignette } from "@react-three/postprocessing";
+import { BlendFunction } from "postprocessing";
 import { useRef, useMemo, Suspense } from "react";
 import * as THREE from "three";
+import { asset } from "@/lib/utils";
 
 /**
- * HeroStage — 3D Centerpiece statt Text-Hero.
+ * HeroStage v2 — Echtes 3D-Logo als Centerpiece.
  *
- * Wireframe-Konstruktion (Messestand-Stuetzrahmen) zentral,
- * Camera kreist langsam + reagiert auf Mausbewegung (Parallax).
- * Particle-Field als atmosphaerischer Staub.
+ * Komposition:
+ * - GROSSMark: Cube mit G-Cutout-Anschnitt, ExtrudeGeometry, premium Material
+ * - GROSSWordmark: Text3D extruded Wordmark daneben
+ * - Studio-Environment + 3-Point-Lighting
+ * - Postprocessing: Bloom + ChromaticAberration + Vignette
+ * - Float-Wrapper fuer dauerhafte sanfte Bewegung
+ * - Camera-Drift + Mouse-Parallax
+ * - Particle-Field als atmosphaerischer Hintergrund
  *
- * Aesthetik: Engineering-Plotter-Continuation aus dem Boot.
- * Inhalt kommt spaeter als floatende Panels die punktuell andocken.
+ * Aesthetik: Premium-Studio, Tech-Skulptur, kein generischer 3D-Kram.
  */
 
-function FrameStructure() {
-  const groupRef = useRef<THREE.Group>(null);
+// ============================================================
+// GROSS MARK — Custom Geometry
+// ============================================================
+
+function buildMarkGeometry() {
+  // Outer cube outline as flat 2D Hexagon (isometric front view)
+  // We extrude a hexagon for the cube silhouette.
+  const hex = new THREE.Shape();
+  const r = 1.0;
+  // Hexagon points (pointy-top orientation, isometric cube projection)
+  const points: [number, number][] = [
+    [0, r],
+    [r * Math.sin(Math.PI / 3), r * Math.cos(Math.PI / 3)],
+    [r * Math.sin(Math.PI / 3), -r * Math.cos(Math.PI / 3)],
+    [0, -r],
+    [-r * Math.sin(Math.PI / 3), -r * Math.cos(Math.PI / 3)],
+    [-r * Math.sin(Math.PI / 3), r * Math.cos(Math.PI / 3)],
+  ];
+  hex.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) hex.lineTo(points[i][0], points[i][1]);
+  hex.closePath();
+
+  // G-shaped hole inside — abstract geometric G
+  const hole = new THREE.Path();
+  // Three-stroke G: top arc, vertical right, inner bar
+  hole.moveTo(-0.35, 0.4);
+  hole.lineTo(0.35, 0.4);
+  hole.lineTo(0.35, -0.4);
+  hole.lineTo(-0.05, -0.4);
+  hole.lineTo(-0.05, -0.05);
+  hole.lineTo(0.18, -0.05);
+  hole.lineTo(0.18, 0.18);
+  hole.lineTo(-0.18, 0.18);
+  hole.lineTo(-0.18, -0.18);
+  hole.closePath();
+  hex.holes.push(hole);
+
+  return new THREE.ExtrudeGeometry(hex, {
+    depth: 0.35,
+    bevelEnabled: true,
+    bevelThickness: 0.04,
+    bevelSize: 0.03,
+    bevelOffset: 0,
+    bevelSegments: 4,
+    curveSegments: 12,
+  });
+}
+
+function GrossMark3D() {
+  const geometry = useMemo(() => buildMarkGeometry(), []);
+  const ref = useRef<THREE.Mesh>(null);
 
   useFrame((state) => {
-    if (!groupRef.current) return;
+    if (!ref.current) return;
     const t = state.clock.elapsedTime;
-    // Slow continuous rotation around Y
-    groupRef.current.rotation.y = t * 0.08;
-    // Subtle wobble around X
-    groupRef.current.rotation.x = Math.sin(t * 0.4) * 0.06;
+    ref.current.rotation.y = t * 0.18;
+    ref.current.rotation.x = Math.sin(t * 0.3) * 0.1;
   });
 
-  // Geometry: rectangular frame (messestand-style) with cross-bracing
-  // Beams as thin boxes for proper wireframe visibility
   return (
-    <group ref={groupRef}>
-      {/* Outer frame — top and bottom rails */}
-      {[-1.5, 1.5].map((y, i) => (
-        <mesh key={`rail-y-${i}`} position={[0, y, 0]}>
-          <boxGeometry args={[3, 0.04, 0.04]} />
-          <meshBasicMaterial color="#b8c4d0" wireframe transparent opacity={0.55} />
-        </mesh>
-      ))}
-      {/* Side rails */}
-      {[-1.5, 1.5].map((x, i) => (
-        <mesh key={`rail-x-${i}`} position={[x, 0, 0]}>
-          <boxGeometry args={[0.04, 3, 0.04]} />
-          <meshBasicMaterial color="#b8c4d0" wireframe transparent opacity={0.55} />
-        </mesh>
-      ))}
-      {/* Depth rails */}
-      {[
-        [-1.5, 1.5, 0],
-        [1.5, 1.5, 0],
-        [-1.5, -1.5, 0],
-        [1.5, -1.5, 0],
-      ].map(([x, y], i) => (
-        <mesh key={`rail-z-${i}`} position={[x, y, 0]}>
-          <boxGeometry args={[0.04, 0.04, 3]} />
-          <meshBasicMaterial color="#b8c4d0" wireframe transparent opacity={0.55} />
-        </mesh>
-      ))}
-      {/* Diagonal cross-bracing on front face */}
-      <mesh rotation={[0, 0, Math.PI / 4]} position={[0, 0, 1.5]}>
-        <boxGeometry args={[4.2, 0.02, 0.02]} />
-        <meshBasicMaterial color="#b8c4d0" wireframe transparent opacity={0.3} />
-      </mesh>
-      <mesh rotation={[0, 0, -Math.PI / 4]} position={[0, 0, 1.5]}>
-        <boxGeometry args={[4.2, 0.02, 0.02]} />
-        <meshBasicMaterial color="#b8c4d0" wireframe transparent opacity={0.3} />
-      </mesh>
-
-      {/* G-Glyph hovering inside — abstract centerpiece */}
-      <group position={[0, 0, 0]}>
-        <mesh rotation={[0, 0, 0]}>
-          <torusGeometry args={[1.0, 0.03, 8, 60, Math.PI * 1.55]} />
-          <meshBasicMaterial color="#e8e6df" transparent opacity={0.9} />
-        </mesh>
-        {/* Inner G-bar */}
-        <mesh position={[0.4, 0, 0]}>
-          <boxGeometry args={[0.62, 0.06, 0.06]} />
-          <meshBasicMaterial color="#e8e6df" transparent opacity={0.95} />
-        </mesh>
-        {/* End cap dot */}
-        <mesh position={[0.7, 0, 0]}>
-          <sphereGeometry args={[0.07, 12, 12]} />
-          <meshBasicMaterial color="#e8e6df" />
-        </mesh>
-      </group>
-
-      {/* Anchor reference points at corners — small platinum spheres */}
-      {[
-        [-1.5, 1.5, 1.5],
-        [1.5, 1.5, 1.5],
-        [-1.5, -1.5, 1.5],
-        [1.5, -1.5, 1.5],
-        [-1.5, 1.5, -1.5],
-        [1.5, 1.5, -1.5],
-        [-1.5, -1.5, -1.5],
-        [1.5, -1.5, -1.5],
-      ].map((pos, i) => (
-        <mesh key={`anchor-${i}`} position={pos as [number, number, number]}>
-          <sphereGeometry args={[0.04, 8, 8]} />
-          <meshBasicMaterial color="#b8c4d0" />
-        </mesh>
-      ))}
-    </group>
+    <mesh ref={ref} geometry={geometry} castShadow receiveShadow>
+      <meshPhysicalMaterial
+        color="#f3f1ea"
+        metalness={0.85}
+        roughness={0.18}
+        clearcoat={0.6}
+        clearcoatRoughness={0.1}
+        envMapIntensity={1.4}
+        reflectivity={0.5}
+      />
+    </mesh>
   );
 }
+
+// ============================================================
+// GROSS WORDMARK — extruded 3D text
+// ============================================================
+
+function GrossWordmark3D() {
+  return (
+    <Center position={[2.6, 0, 0]}>
+      <Text3D
+        font={asset("/helvetiker_bold.typeface.json")}
+        size={1.0}
+        height={0.16}
+        curveSegments={6}
+        bevelEnabled
+        bevelThickness={0.025}
+        bevelSize={0.018}
+        bevelSegments={3}
+        letterSpacing={-0.04}
+      >
+        GROSS
+        <meshPhysicalMaterial
+          color="#f3f1ea"
+          metalness={0.78}
+          roughness={0.22}
+          clearcoat={0.4}
+          envMapIntensity={1.2}
+        />
+      </Text3D>
+    </Center>
+  );
+}
+
+// ============================================================
+// PARTICLE FIELD — atmospheric background dust
+// ============================================================
 
 function ParticleField() {
   const ref = useRef<THREE.Points>(null);
 
   const positions = useMemo(() => {
-    const count = 1500;
+    const count = 1200;
     const arr = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      // Spherical distribution radius 8-15
-      const r = 8 + Math.random() * 7;
+      const r = 10 + Math.random() * 12;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       arr[i * 3] = r * Math.sin(phi) * Math.cos(theta);
@@ -125,57 +151,69 @@ function ParticleField() {
 
   useFrame((state) => {
     if (!ref.current) return;
-    ref.current.rotation.y = state.clock.elapsedTime * 0.012;
-    ref.current.rotation.x = state.clock.elapsedTime * 0.006;
+    ref.current.rotation.y = state.clock.elapsedTime * 0.01;
+    ref.current.rotation.x = state.clock.elapsedTime * 0.005;
   });
 
   return (
     <points ref={ref}>
       <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[positions, 3]}
-        />
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
       </bufferGeometry>
       <pointsMaterial
-        size={0.025}
+        size={0.022}
         color="#b8c4d0"
         transparent
-        opacity={0.5}
+        opacity={0.45}
         sizeAttenuation
+        depthWrite={false}
       />
     </points>
   );
 }
 
+// ============================================================
+// CAMERA RIG — auto-drift + mouse parallax
+// ============================================================
+
 function CameraRig() {
   const target = useRef({ x: 0, y: 0 });
   const current = useRef({ x: 0, y: 0 });
+  const { camera } = useThree();
 
   useFrame((state) => {
-    // Mouse parallax — gentle
-    target.current.x = state.mouse.x * 0.6;
-    target.current.y = state.mouse.y * 0.4;
+    target.current.x = state.mouse.x * 0.8;
+    target.current.y = state.mouse.y * 0.5;
     current.current.x += (target.current.x - current.current.x) * 0.04;
     current.current.y += (target.current.y - current.current.y) * 0.04;
 
-    // Auto camera-drift around the centerpiece + parallax
     const t = state.clock.elapsedTime;
-    const driftAngle = Math.sin(t * 0.05) * 0.4;
-    state.camera.position.x = Math.sin(driftAngle) * 5 + current.current.x;
-    state.camera.position.y = current.current.y + 0.4;
-    state.camera.position.z = Math.cos(driftAngle) * 5 + 1;
-    state.camera.lookAt(0, 0, 0);
+    const driftAngle = Math.sin(t * 0.06) * 0.35;
+    const radius = 7;
+    camera.position.x = Math.sin(driftAngle) * radius + current.current.x;
+    camera.position.y = current.current.y + 0.3;
+    camera.position.z = Math.cos(driftAngle) * radius;
+    camera.lookAt(1.0, 0, 0); // slight offset towards wordmark
   });
 
   return null;
 }
 
+// ============================================================
+// MAIN STAGE
+// ============================================================
+
 export function HeroStage() {
   return (
     <Canvas
-      camera={{ position: [0, 0.4, 5], fov: 55 }}
-      gl={{ alpha: true, antialias: true, powerPreference: "high-performance" }}
+      camera={{ position: [0, 0.3, 7], fov: 50 }}
+      gl={{
+        alpha: true,
+        antialias: true,
+        powerPreference: "high-performance",
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: 0.85,
+      }}
       dpr={[1, 1.5]}
       style={{
         position: "absolute",
@@ -184,11 +222,58 @@ export function HeroStage() {
       }}
     >
       <Suspense fallback={null}>
-        <ambientLight intensity={0.4} />
-        <pointLight position={[5, 5, 5]} intensity={0.6} color="#b8c4d0" />
-        <FrameStructure />
+        {/* Lighting Studio — softer */}
+        <ambientLight intensity={0.25} />
+        <directionalLight
+          position={[5, 6, 4]}
+          intensity={0.9}
+          color="#ffffff"
+        />
+        <directionalLight
+          position={[-4, 3, 2]}
+          intensity={0.55}
+          color="#b8c4d0"
+        />
+        <pointLight position={[0, -3, 4]} intensity={0.3} color="#8a9ba8" />
+
+        {/* Environment for reflections */}
+        <Environment preset="studio" />
+
+        {/* Centerpiece — Mark + Wordmark, both inside Float for breathing */}
+        <Float
+          speed={1.2}
+          rotationIntensity={0.15}
+          floatIntensity={0.4}
+          floatingRange={[-0.05, 0.05]}
+        >
+          <group position={[-1.4, 0, 0]}>
+            <GrossMark3D />
+          </group>
+          <GrossWordmark3D />
+        </Float>
+
+        {/* Atmospheric particles */}
         <ParticleField />
+
+        {/* Camera animation */}
         <CameraRig />
+
+        {/* Postprocessing */}
+        <EffectComposer multisampling={2}>
+          <Bloom
+            intensity={0.35}
+            luminanceThreshold={0.75}
+            luminanceSmoothing={0.85}
+            mipmapBlur
+          />
+          <ChromaticAberration
+            offset={[0.0005, 0.0005]}
+            radialModulation={false}
+            modulationOffset={0}
+            blendFunction={BlendFunction.NORMAL}
+          />
+          <Vignette eskil={false} offset={0.15} darkness={0.55} />
+        </EffectComposer>
       </Suspense>
     </Canvas>
   );
