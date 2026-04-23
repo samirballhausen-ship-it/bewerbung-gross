@@ -237,7 +237,7 @@ export function MessestandSection() {
 
       {/* ── PORTAL WRAPPER (centred) ── */}
       <div className="absolute inset-0 flex items-center justify-center z-10">
-        <div className="relative" style={{ width: "min(72vw, 78vh * 1.778)", aspectRatio: "16/9", maxWidth: "72vw", maxHeight: "78vh" }}>
+        <div className="relative" style={{ width: "70vw", maxWidth: "calc(76vh * 16 / 9)", aspectRatio: "16 / 9" }}>
 
           {/* Outer glow ring */}
           <div
