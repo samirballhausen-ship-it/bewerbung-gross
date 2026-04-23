@@ -22,8 +22,8 @@ const STAGE_LABELS = [
   { from: 0.93, to: 1.01, text: "Wir schaffen Raum für Kommunikation." },
 ];
 
-const FRAME_MS    = 380;
-const FADE_MS     = 560;
+const FRAME_MS    = 650;
+const FADE_MS     = 750;
 const LOGO_INTRO  = 1400;  // particle convergence + flash
 const LOGO_HOLD   = 3600;  // logo fully visible
 const LOGO_OUTRO  = 800;   // fade out
